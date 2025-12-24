@@ -1,22 +1,43 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from sqlalchemy import func
+from pydantic import BaseModel
+from typing import Optional
 import random
 import os
+import uuid
+from contextlib import asynccontextmanager
 
-app = FastAPI(title="ReadRabbit API")
+# Database imports
+from database import get_db, init_db, Article, SourceType, ArticleStatus, SessionLocal
 
-# CORS for frontend - allow localhost and production URLs
+# Check if database is configured
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup: Initialize database tables
+    if DATABASE_URL:
+        init_db()
+        # Seed with initial articles if empty
+        seed_articles_if_empty()
+    yield
+    # Shutdown: nothing to do
+
+
+app = FastAPI(title="ReadRabbit API", lifespan=lifespan)
+
+# CORS for frontend
 allowed_origins = [
     "http://localhost:5173",
     "http://localhost:3000",
 ]
 
-# Add production frontend URL from environment
 frontend_url = os.getenv("FRONTEND_URL")
 if frontend_url:
     allowed_origins.append(frontend_url)
-    # Also allow Vercel preview URLs
-    allowed_origins.append("https://*.vercel.app")
 
 app.add_middleware(
     CORSMiddleware,
@@ -27,10 +48,34 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Mock Notion database - we'll replace this with real Notion API later
-MOCK_ARTICLES = [
+
+# ============== Pydantic Models ==============
+
+class ArticleCreate(BaseModel):
+    title: str
+    url: str
+    source: Optional[str] = None
+    author: Optional[str] = None
+    summary: Optional[str] = None
+    topics: Optional[list[str]] = []
+    read_time: Optional[int] = None
+    source_type: Optional[str] = SourceType.MANUAL.value
+
+
+class ArticleUpdate(BaseModel):
+    title: Optional[str] = None
+    source: Optional[str] = None
+    author: Optional[str] = None
+    summary: Optional[str] = None
+    topics: Optional[list[str]] = None
+    read_time: Optional[int] = None
+    status: Optional[str] = None
+
+
+# ============== Seed Data ==============
+
+SEED_ARTICLES = [
     {
-        "id": "1",
         "title": "The Age of AI Has Begun",
         "url": "https://www.gatesnotes.com/The-Age-of-AI-Has-Begun",
         "source": "Gates Notes",
@@ -40,7 +85,6 @@ MOCK_ARTICLES = [
         "summary": "Bill Gates on why AI is as revolutionary as mobile phones and the Internet.",
     },
     {
-        "id": "2",
         "title": "How to Do Great Work",
         "url": "http://paulgraham.com/greatwork.html",
         "source": "Paul Graham",
@@ -50,7 +94,6 @@ MOCK_ARTICLES = [
         "summary": "A comprehensive guide on doing meaningful work and finding what to work on.",
     },
     {
-        "id": "3",
         "title": "The Friendship That Made Google Huge",
         "url": "https://www.newyorker.com/magazine/2018/12/10/the-friendship-that-made-google-huge",
         "source": "The New Yorker",
@@ -60,7 +103,6 @@ MOCK_ARTICLES = [
         "summary": "The story of Jeff Dean and Sanjay Ghemawat, the engineering duo behind Google's infrastructure.",
     },
     {
-        "id": "4",
         "title": "1000 True Fans",
         "url": "https://kk.org/thetechnium/1000-true-fans/",
         "source": "The Technium",
@@ -70,7 +112,6 @@ MOCK_ARTICLES = [
         "summary": "You don't need millions of customers. You need 1000 true fans.",
     },
     {
-        "id": "5",
         "title": "The Munger Operating System",
         "url": "https://fs.blog/munger-operating-system/",
         "source": "Farnam Street",
@@ -80,7 +121,6 @@ MOCK_ARTICLES = [
         "summary": "Charlie Munger's approach to life, decision-making, and continuous learning.",
     },
     {
-        "id": "6",
         "title": "Taste for Makers",
         "url": "http://paulgraham.com/taste.html",
         "source": "Paul Graham",
@@ -90,17 +130,6 @@ MOCK_ARTICLES = [
         "summary": "What is good design? How do you develop taste? Paul Graham explores.",
     },
     {
-        "id": "7",
-        "title": "The Billion Dollar Code",
-        "url": "https://www.wired.com/story/the-billion-dollar-code/",
-        "source": "Wired",
-        "author": "Various",
-        "read_time": 18,
-        "topics": ["Technology", "Legal", "History"],
-        "summary": "The untold story behind Google Earth and the German art project that inspired it.",
-    },
-    {
-        "id": "8",
         "title": "The Psychology of Money",
         "url": "https://collabfund.com/blog/the-psychology-of-money/",
         "source": "Collaborative Fund",
@@ -110,27 +139,6 @@ MOCK_ARTICLES = [
         "summary": "Why personal finance is more about behavior than intelligence.",
     },
     {
-        "id": "9",
-        "title": "What I Wish I Had Known When I Started",
-        "url": "https://blog.samaltman.com/what-i-wish-someone-had-told-me",
-        "source": "Sam Altman Blog",
-        "author": "Sam Altman",
-        "read_time": 5,
-        "topics": ["Startups", "Career", "Advice"],
-        "summary": "Sam Altman's condensed advice for founders and ambitious people.",
-    },
-    {
-        "id": "10",
-        "title": "The Craft of Writing Effectively",
-        "url": "https://www.youtube.com/watch?v=vtIzMaLkCaM",
-        "source": "University of Chicago",
-        "author": "Larry McEnerney",
-        "read_time": 90,
-        "topics": ["Writing", "Communication", "Academia"],
-        "summary": "A masterclass on why most writing fails and how to make yours matter.",
-    },
-    {
-        "id": "11",
         "title": "Speed Matters",
         "url": "https://jsomers.net/blog/speed-matters",
         "source": "James Somers",
@@ -140,7 +148,6 @@ MOCK_ARTICLES = [
         "summary": "Why being fast changes how you think and what you're willing to attempt.",
     },
     {
-        "id": "12",
         "title": "The Days Are Long But The Decades Are Short",
         "url": "https://blog.samaltman.com/the-days-are-long-but-the-decades-are-short",
         "source": "Sam Altman Blog",
@@ -149,48 +156,216 @@ MOCK_ARTICLES = [
         "topics": ["Life Advice", "Philosophy", "Aging"],
         "summary": "36 pieces of life advice on Sam Altman's 30th birthday.",
     },
+    {
+        "title": "What I Wish Someone Had Told Me",
+        "url": "https://blog.samaltman.com/what-i-wish-someone-had-told-me",
+        "source": "Sam Altman Blog",
+        "author": "Sam Altman",
+        "read_time": 5,
+        "topics": ["Startups", "Career", "Advice"],
+        "summary": "Sam Altman's condensed advice for founders and ambitious people.",
+    },
 ]
 
-# Track which articles have been shown (in-memory for now)
+
+def seed_articles_if_empty():
+    """Seed the database with initial articles if it's empty."""
+    if not SessionLocal:
+        return
+    
+    db = SessionLocal()
+    try:
+        count = db.query(Article).count()
+        if count == 0:
+            print("Seeding database with initial articles...")
+            for article_data in SEED_ARTICLES:
+                article = Article(
+                    id=str(uuid.uuid4()),
+                    title=article_data["title"],
+                    url=article_data["url"],
+                    source=article_data.get("source"),
+                    author=article_data.get("author"),
+                    summary=article_data.get("summary"),
+                    topics=article_data.get("topics", []),
+                    read_time=article_data.get("read_time"),
+                    source_type=SourceType.MANUAL.value,
+                    status=ArticleStatus.UNREAD.value,
+                )
+                db.add(article)
+            db.commit()
+            print(f"Seeded {len(SEED_ARTICLES)} articles!")
+    finally:
+        db.close()
+
+
+# ============== In-Memory Fallback (when no DB) ==============
+
+# Track shown articles (in-memory, for both DB and non-DB modes)
 shown_article_ids: set[str] = set()
 
 
+# ============== API Endpoints ==============
+
 @app.get("/")
 def read_root():
-    return {"status": "ok", "app": "ReadRabbit API"}
+    return {
+        "status": "ok",
+        "app": "ReadRabbit API",
+        "database": "connected" if DATABASE_URL else "not configured (using mock data)"
+    }
+
+
+@app.get("/api/articles")
+def list_articles(
+    skip: int = 0,
+    limit: int = 50,
+    status: Optional[str] = None,
+    source_type: Optional[str] = None,
+    db: Session = Depends(get_db)
+):
+    """List all articles with optional filtering."""
+    query = db.query(Article)
+    
+    if status:
+        query = query.filter(Article.status == status)
+    if source_type:
+        query = query.filter(Article.source_type == source_type)
+    
+    articles = query.offset(skip).limit(limit).all()
+    return {"articles": [a.to_dict() for a in articles], "total": query.count()}
 
 
 @app.get("/api/articles/random")
-def get_random_articles(count: int = 4):
-    """Get random articles, avoiding recently shown ones if possible."""
-    available = [a for a in MOCK_ARTICLES if a["id"] not in shown_article_ids]
+def get_random_articles(count: int = 4, db: Session = Depends(get_db)):
+    """Get random articles, avoiding recently shown ones."""
+    
+    # Get articles not yet shown, excluding dismissed
+    query = db.query(Article).filter(
+        Article.status != ArticleStatus.DISMISSED.value,
+        ~Article.id.in_(shown_article_ids) if shown_article_ids else True
+    )
+    
+    available = query.all()
     
     # If we've shown everything, reset
     if len(available) < count:
         shown_article_ids.clear()
-        available = MOCK_ARTICLES.copy()
+        available = db.query(Article).filter(
+            Article.status != ArticleStatus.DISMISSED.value
+        ).all()
     
+    # Random sample
     selected = random.sample(available, min(count, len(available)))
     
-    # Track shown articles
+    # Track shown
     for article in selected:
-        shown_article_ids.add(article["id"])
+        shown_article_ids.add(article.id)
     
-    return {"articles": selected}
+    return {"articles": [a.to_dict() for a in selected]}
+
+
+@app.get("/api/articles/{article_id}")
+def get_article(article_id: str, db: Session = Depends(get_db)):
+    """Get a single article by ID."""
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    return article.to_dict()
+
+
+@app.post("/api/articles")
+def create_article(article: ArticleCreate, db: Session = Depends(get_db)):
+    """Create a new article."""
+    # Check if URL already exists
+    existing = db.query(Article).filter(Article.url == article.url).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Article with this URL already exists")
+    
+    db_article = Article(
+        id=str(uuid.uuid4()),
+        title=article.title,
+        url=article.url,
+        source=article.source,
+        author=article.author,
+        summary=article.summary,
+        topics=article.topics,
+        read_time=article.read_time,
+        source_type=article.source_type,
+        status=ArticleStatus.UNREAD.value,
+    )
+    db.add(db_article)
+    db.commit()
+    db.refresh(db_article)
+    return db_article.to_dict()
+
+
+@app.put("/api/articles/{article_id}")
+def update_article(article_id: str, article: ArticleUpdate, db: Session = Depends(get_db)):
+    """Update an existing article."""
+    db_article = db.query(Article).filter(Article.id == article_id).first()
+    if not db_article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    update_data = article.model_dump(exclude_unset=True)
+    for key, value in update_data.items():
+        setattr(db_article, key, value)
+    
+    db.commit()
+    db.refresh(db_article)
+    return db_article.to_dict()
+
+
+@app.delete("/api/articles/{article_id}")
+def delete_article(article_id: str, db: Session = Depends(get_db)):
+    """Delete an article."""
+    db_article = db.query(Article).filter(Article.id == article_id).first()
+    if not db_article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    db.delete(db_article)
+    db.commit()
+    return {"status": "deleted", "article_id": article_id}
 
 
 @app.post("/api/articles/{article_id}/dismiss")
-def dismiss_article(article_id: str):
-    """Mark an article as 'don't show again'."""
+def dismiss_article(article_id: str, db: Session = Depends(get_db)):
+    """Mark an article as dismissed (don't show again)."""
+    db_article = db.query(Article).filter(Article.id == article_id).first()
+    if not db_article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    db_article.status = ArticleStatus.DISMISSED.value
+    db.commit()
     shown_article_ids.add(article_id)
     return {"status": "dismissed", "article_id": article_id}
 
 
 @app.post("/api/articles/reset")
 def reset_shown():
-    """Reset shown articles (for testing)."""
+    """Reset shown articles tracking."""
     shown_article_ids.clear()
     return {"status": "reset"}
+
+
+# ============== Admin Endpoints ==============
+
+@app.get("/api/admin/stats")
+def get_stats(db: Session = Depends(get_db)):
+    """Get database statistics."""
+    total = db.query(Article).count()
+    by_source_type = db.query(
+        Article.source_type, func.count(Article.id)
+    ).group_by(Article.source_type).all()
+    by_status = db.query(
+        Article.status, func.count(Article.id)
+    ).group_by(Article.status).all()
+    
+    return {
+        "total_articles": total,
+        "by_source_type": {s: c for s, c in by_source_type},
+        "by_status": {s: c for s, c in by_status},
+        "shown_this_session": len(shown_article_ids),
+    }
 
 
 if __name__ == "__main__":
