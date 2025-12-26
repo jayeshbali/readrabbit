@@ -435,6 +435,104 @@ async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== Discovery Agent Endpoints ==============
+
+class DiscoveryInput(BaseModel):
+    content: str  # URL or free text
+    input_type: str = "article"  # article, podcast, tweet, text
+    max_results: int = 5
+    auto_save: bool = False  # Whether to automatically save recommendations
+
+
+@app.post("/api/agent/discover")
+async def discover_articles(input: DiscoveryInput, db: Session = Depends(get_db)):
+    """
+    Run the discovery agent to find similar articles.
+    
+    Input types:
+    - article: URL to an article you liked
+    - podcast: URL to a podcast episode
+    - tweet: URL to a tweet/thread
+    - text: Free text describing what you want
+    """
+    from discovery_agent import run_discovery_agent
+    
+    try:
+        # Get existing URLs to avoid duplicates
+        existing = db.query(Article.url).all()
+        existing_urls = [url for (url,) in existing]
+        
+        # Run the agent
+        result = await run_discovery_agent(
+            input_content=input.content,
+            input_type=input.input_type,
+            max_results=input.max_results,
+            existing_urls=existing_urls,
+        )
+        
+        # Auto-save if requested
+        saved_articles = []
+        if input.auto_save and result.get("recommendations"):
+            for rec in result["recommendations"]:
+                try:
+                    # Check again for duplicates
+                    if db.query(Article).filter(Article.url == rec["url"]).first():
+                        continue
+                    
+                    db_article = Article(
+                        id=str(uuid.uuid4()),
+                        title=rec["title"],
+                        url=rec["url"],
+                        source=rec.get("source"),
+                        author=rec.get("author"),
+                        summary=rec.get("summary"),
+                        topics=rec.get("topics", []),
+                        read_time=rec.get("read_time"),
+                        source_type=SourceType.AI_SUGGESTED.value,
+                        status=ArticleStatus.UNREAD.value,
+                    )
+                    db.add(db_article)
+                    saved_articles.append(db_article.to_dict())
+                except Exception:
+                    continue
+            
+            db.commit()
+            result["saved_articles"] = saved_articles
+            result["saved_count"] = len(saved_articles)
+        
+        return result
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/agent/save-recommendation")
+async def save_recommendation(article: ArticleCreate, db: Session = Depends(get_db)):
+    """Save a single recommendation from the discovery agent."""
+    # Check if URL already exists
+    existing = db.query(Article).filter(Article.url == article.url).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Article already exists")
+    
+    db_article = Article(
+        id=str(uuid.uuid4()),
+        title=article.title,
+        url=article.url,
+        source=article.source,
+        author=article.author,
+        summary=article.summary,
+        topics=article.topics,
+        read_time=article.read_time,
+        source_type=SourceType.AI_SUGGESTED.value,
+        status=ArticleStatus.UNREAD.value,
+    )
+    db.add(db_article)
+    db.commit()
+    db.refresh(db_article)
+    
+    return {"success": True, "article": db_article.to_dict()}
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
