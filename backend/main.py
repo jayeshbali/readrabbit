@@ -368,6 +368,73 @@ def get_stats(db: Session = Depends(get_db)):
     }
 
 
+# ============== AI-Powered Endpoints ==============
+
+class URLInput(BaseModel):
+    url: str
+
+
+@app.post("/api/admin/extract-metadata")
+async def extract_metadata(input: URLInput):
+    """Extract article metadata from a URL using AI."""
+    from ai_service import extract_article_metadata, fetch_url_content
+    
+    try:
+        # Fetch page content to help AI
+        html_content = await fetch_url_content(input.url)
+        
+        # Extract metadata using Groq
+        metadata = await extract_article_metadata(input.url, html_content)
+        
+        return {
+            "success": True,
+            "url": input.url,
+            "metadata": metadata
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/admin/add-article-smart")
+async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
+    """Fetch URL, extract metadata with AI, and add to database."""
+    from ai_service import extract_article_metadata, fetch_url_content
+    
+    # Check if URL already exists
+    existing = db.query(Article).filter(Article.url == input.url).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Article with this URL already exists")
+    
+    try:
+        # Fetch and extract
+        html_content = await fetch_url_content(input.url)
+        metadata = await extract_article_metadata(input.url, html_content)
+        
+        # Create article
+        db_article = Article(
+            id=str(uuid.uuid4()),
+            title=metadata.get("title", "Untitled"),
+            url=input.url,
+            source=metadata.get("source"),
+            author=metadata.get("author"),
+            summary=metadata.get("summary"),
+            topics=metadata.get("topics", []),
+            read_time=metadata.get("read_time"),
+            source_type=SourceType.MANUAL.value,
+            status=ArticleStatus.UNREAD.value,
+        )
+        db.add(db_article)
+        db.commit()
+        db.refresh(db_article)
+        
+        return {
+            "success": True,
+            "article": db_article.to_dict()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
