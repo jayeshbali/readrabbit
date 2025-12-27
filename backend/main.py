@@ -561,10 +561,3 @@ if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
-```
-
----
-
-After deploying, test this URL in your browser:
-```
-https://readrabbit.onrender.com/api/debug/youtube?url=https://www.youtube.com/watch?v=cdiD-9MMpb0
