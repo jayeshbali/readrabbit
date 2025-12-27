@@ -533,7 +533,38 @@ async def save_recommendation(article: ArticleCreate, db: Session = Depends(get_
     return {"success": True, "article": db_article.to_dict()}
 
 
+@app.get("/api/debug/youtube")
+def debug_youtube(url: str):
+    """Debug YouTube transcript extraction."""
+    from youtube_service import is_youtube_url, get_youtube_transcript, extract_video_id
+    
+    video_id = extract_video_id(url)
+    
+    # Try raw API call to see actual error
+    try:
+        from youtube_transcript_api import YouTubeTranscriptApi
+        transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+        available = [{"language": t.language, "language_code": t.language_code, "is_generated": t.is_generated} for t in transcript_list]
+    except Exception as e:
+        available = f"Error: {type(e).__name__}: {str(e)}"
+    
+    return {
+        "url": url,
+        "is_youtube": is_youtube_url(url),
+        "video_id": video_id,
+        "available_transcripts": available,
+        "full_result": get_youtube_transcript(url)
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
     uvicorn.run(app, host="0.0.0.0", port=port)
+```
+
+---
+
+After deploying, test this URL in your browser:
+```
+https://readrabbit.onrender.com/api/debug/youtube?url=https://www.youtube.com/watch?v=cdiD-9MMpb0
