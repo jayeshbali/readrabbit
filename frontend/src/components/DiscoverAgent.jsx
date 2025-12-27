@@ -4,7 +4,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 const INPUT_TYPES = [
   { id: 'article', label: '📄 Article', placeholder: 'Paste article URL...' },
-  { id: 'podcast', label: '🎙️ Podcast', placeholder: 'Paste podcast episode URL...' },
+  { id: 'podcast', label: '🎙️ Podcast/Video', placeholder: 'Paste YouTube or podcast URL...' },
   { id: 'tweet', label: '🐦 Tweet', placeholder: 'Paste tweet/thread URL...' },
   { id: 'text', label: '💭 Describe', placeholder: 'Describe what you want to read about...' },
 ]
@@ -153,6 +153,13 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
               className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               onKeyDown={(e) => e.key === 'Enter' && handleDiscover()}
             />
+          )}
+          
+          {/* Hint for podcast/video */}
+          {inputType === 'podcast' && (
+            <p className="text-xs text-gray-400 mt-2">
+              ✨ YouTube URLs will automatically extract the transcript for better recommendations
+            </p>
           )}
 
           {/* Discover Button */}
