@@ -92,16 +92,24 @@ async def analyze_input_content(input_text: str, input_type: str) -> dict:
     """
     Analyze the input (article, podcast, tweet, or free text) to extract themes.
     """
-    prompt = f"""Analyze this {input_type} and extract the main themes, topics, and concepts.
+    prompt = f"""You are analyzing a {input_type} to understand what topics it discusses.
 
-Input:
+Content to analyze:
 {input_text}
+
+IMPORTANT: Extract what this content is ABOUT - the actual subjects, ideas, and themes discussed. 
+Do NOT extract meta-concepts about analysis methods or how to process content.
+
+For example:
+- If it's a podcast about investing and AI, extract: ["Investing", "Artificial Intelligence", "Startups"]
+- If it discusses mental models and decision-making, extract: ["Mental Models", "Decision Making", "Psychology"]
+- If it's about a specific person's philosophy, extract their key ideas and domains
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {{
     "main_topics": ["topic1", "topic2", "topic3"],
-    "key_concepts": ["concept1", "concept2"],
-    "related_fields": ["field1", "field2"],
+    "key_concepts": ["specific concept or idea discussed", "another concept"],
+    "related_fields": ["broader field 1", "broader field 2"],
     "suggested_search_queries": [
         "search query 1 for finding similar articles",
         "search query 2 for finding similar articles",
@@ -109,7 +117,19 @@ Respond with ONLY valid JSON (no markdown, no explanation):
     ]
 }}
 
-For search queries, create specific queries that would find high-quality long-form articles on these topics. Include terms like "essay", "guide", "deep dive", or author names if relevant."""
+For search queries, create specific queries that would find high-quality long-form articles on the SAME topics discussed in this content. Include terms like "essay", "guide", "deep dive", or names of thinkers/authors who write about these topics.
+
+Examples of GOOD search queries for a podcast about Bitcoin and first principles:
+- "first principles thinking essays"
+- "bitcoin investment philosophy long-form"  
+- "Chamath Palihapitiya investing strategy"
+
+Examples of BAD search queries (too meta, do not use these):
+- "how to analyze podcast themes"
+- "topic modeling methods"
+- "thematic analysis guide"
+
+Respond with ONLY the JSON object, nothing else."""
 
     response = await call_groq(prompt)
     
