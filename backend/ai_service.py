@@ -43,52 +43,63 @@ For read_time, estimate based on typical article length (5-10 min for blogs, 15-
 
 Respond with ONLY the JSON object, nothing else."""
 
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            GROQ_API_URL,
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "llama-3.1-8b-instant",
-                "messages": [
-                    {
-                        "role": "system",
-                        "content": "You are a helpful assistant that extracts article metadata. Always respond with valid JSON only."
-                    },
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
-                ],
-                "temperature": 0.3,
-                "max_tokens": 500,
-            },
-        )
-        
-        if response.status_code != 200:
-            raise Exception(f"Groq API error: {response.status_code} - {response.text}")
-        
-        result = response.json()
-        content = result["choices"][0]["message"]["content"]
-        
-        # Parse JSON from response
-        try:
-            # Clean up potential markdown formatting
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.startswith("```"):
-                content = content[3:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Retry logic for rate limits
+        for attempt in range(3):
+            response = await client.post(
+                GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",  # Higher rate limit
+                    "messages": [
+                        {
+                            "role": "system",
+                            "content": "You are a helpful assistant that extracts article metadata. Always respond with valid JSON only."
+                        },
+                        {
+                            "role": "user", 
+                            "content": prompt
+                        }
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 500,
+                },
+            )
             
-            metadata = json.loads(content)
-            return metadata
-        except json.JSONDecodeError as e:
-            raise Exception(f"Failed to parse LLM response as JSON: {content}")
+            if response.status_code == 429:
+                # Rate limited - wait and retry
+                import asyncio
+                wait_time = (attempt + 1) * 15
+                await asyncio.sleep(wait_time)
+                continue
+            
+            if response.status_code != 200:
+                raise Exception(f"Groq API error: {response.status_code} - {response.text}")
+            
+            result = response.json()
+            content = result["choices"][0]["message"]["content"]
+            
+            # Parse JSON from response
+            try:
+                # Clean up potential markdown formatting
+                content = content.strip()
+                if content.startswith("```json"):
+                    content = content[7:]
+                if content.startswith("```"):
+                    content = content[3:]
+                if content.endswith("```"):
+                    content = content[:-3]
+                content = content.strip()
+                
+                metadata = json.loads(content)
+                return metadata
+            except json.JSONDecodeError as e:
+                raise Exception(f"Failed to parse LLM response as JSON: {content}")
+        
+        raise Exception("Rate limit exceeded after 3 retries")
 
 
 async def fetch_url_content(url: str) -> str:

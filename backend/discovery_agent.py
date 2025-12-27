@@ -3,6 +3,7 @@ import httpx
 import json
 from typing import Optional
 from ai_service import extract_article_metadata
+from youtube_service import is_youtube_url, get_youtube_transcript
 
 SERPER_API_KEY = os.getenv("SERPER_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -53,26 +54,38 @@ async def call_groq(prompt: str, system_prompt: str = None) -> str:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
     
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.post(
-            GROQ_API_URL,
-            headers={
-                "Authorization": f"Bearer {GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "llama-3.1-8b-instant",
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 1000,
-            },
-        )
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        # Retry logic for rate limits
+        for attempt in range(3):
+            response = await client.post(
+                GROQ_API_URL,
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "llama-3.3-70b-versatile",  # Higher rate limit than 8b
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 1000,
+                },
+            )
+            
+            if response.status_code == 429:
+                # Rate limited - wait and retry
+                import asyncio
+                wait_time = (attempt + 1) * 15  # 15s, 30s, 45s
+                print(f"[Agent] Rate limited, waiting {wait_time}s...")
+                await asyncio.sleep(wait_time)
+                continue
+            
+            if response.status_code != 200:
+                raise Exception(f"Groq API error: {response.status_code} - {response.text}")
+            
+            result = response.json()
+            return result["choices"][0]["message"]["content"]
         
-        if response.status_code != 200:
-            raise Exception(f"Groq API error: {response.status_code} - {response.text}")
-        
-        result = response.json()
-        return result["choices"][0]["message"]["content"]
+        raise Exception("Rate limit exceeded after 3 retries. Please wait a minute and try again.")
 
 
 async def analyze_input_content(input_text: str, input_type: str) -> dict:
@@ -218,8 +231,25 @@ async def run_discovery_agent(
     
     # If it's a URL, fetch content first
     if input_content.startswith("http"):
-        content_preview = await fetch_content_preview(input_content)
-        analysis_input = f"URL: {input_content}\n\nContent preview:\n{content_preview[:3000]}"
+        # Check if it's a YouTube URL
+        if is_youtube_url(input_content):
+            print(f"[Agent] Detected YouTube URL, extracting transcript...")
+            yt_result = get_youtube_transcript(input_content)
+            
+            if yt_result["success"]:
+                transcript = yt_result["transcript"]
+                duration = yt_result.get("duration_minutes", 0)
+                analysis_input = f"YouTube Video Transcript ({duration} min):\n\n{transcript[:8000]}"
+                print(f"[Agent] Got transcript ({len(transcript)} chars, ~{duration} min)")
+            else:
+                # Fallback to page content if transcript fails
+                print(f"[Agent] Transcript failed: {yt_result.get('error')}, falling back to page content")
+                content_preview = await fetch_content_preview(input_content)
+                analysis_input = f"URL: {input_content}\n\nContent preview:\n{content_preview[:3000]}"
+        else:
+            # Regular URL - fetch page content
+            content_preview = await fetch_content_preview(input_content)
+            analysis_input = f"URL: {input_content}\n\nContent preview:\n{content_preview[:3000]}"
     else:
         analysis_input = input_content
     

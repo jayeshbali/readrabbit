@@ -5,3 +5,4 @@ httpx==0.26.0
 sqlalchemy==2.0.36
 psycopg2-binary==2.9.9
 alembic==1.13.1
+youtube-transcript-api==0.6.2
