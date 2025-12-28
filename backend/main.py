@@ -42,7 +42,7 @@ if frontend_url:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r"(https://.*\.vercel\.app|chrome-extension://.*)",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
