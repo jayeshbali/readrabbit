@@ -29,6 +29,18 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ReadRabbit API", lifespan=lifespan)
 
+# ============== Health Check ==============
+
+@app.get("/")
+def root():
+    """Root endpoint - quick health check"""
+    return {"status": "ok", "service": "ReadRabbit API"}
+
+@app.get("/api/health")
+def health_check():
+    """Health check endpoint for wake-up pings"""
+    return {"status": "ok"}
+
 # CORS for frontend
 allowed_origins = [
     "http://localhost:5173",
@@ -531,6 +543,74 @@ async def save_recommendation(article: ArticleCreate, db: Session = Depends(get_
     db.refresh(db_article)
     
     return {"success": True, "article": db_article.to_dict()}
+
+
+class ForYouInput(BaseModel):
+    max_results: int = 5
+
+
+@app.post("/api/agent/for-you")
+async def get_for_you_recommendations(input: ForYouInput, db: Session = Depends(get_db)):
+    """
+    Get personalized recommendations based on your entire library.
+    Analyzes all your saved articles to build a reading profile,
+    then finds new articles that match your interests.
+    """
+    from discovery_agent import run_for_you_agent
+    
+    try:
+        # Get all articles from the library
+        articles = db.query(Article).filter(
+            Article.status != ArticleStatus.DISMISSED.value
+        ).all()
+        articles_data = [a.to_dict() for a in articles]
+        
+        # Get existing URLs to avoid duplicates
+        existing_urls = [a.url for a in articles]
+        
+        # Run the For You agent
+        result = await run_for_you_agent(
+            articles=articles_data,
+            max_results=input.max_results,
+            existing_urls=existing_urls,
+        )
+        
+        return result
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/agent/reading-profile")
+async def get_reading_profile(db: Session = Depends(get_db)):
+    """
+    Get your reading profile without searching for new articles.
+    Shows your interest breakdown, favorite sources, and content preferences.
+    """
+    from discovery_agent import analyze_reading_profile
+    
+    try:
+        # Get all articles from the library
+        articles = db.query(Article).filter(
+            Article.status != ArticleStatus.DISMISSED.value
+        ).all()
+        articles_data = [a.to_dict() for a in articles]
+        
+        if len(articles_data) < 3:
+            return {
+                "success": False,
+                "error": "Need at least 3 articles to build a profile",
+                "article_count": len(articles_data)
+            }
+        
+        profile = await analyze_reading_profile(articles_data)
+        profile["success"] = True
+        profile["article_count"] = len(articles_data)
+        
+        return profile
+    
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/debug/youtube")
