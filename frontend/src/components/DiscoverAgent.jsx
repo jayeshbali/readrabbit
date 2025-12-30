@@ -3,6 +3,7 @@ import React, { useState } from 'react'
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 const INPUT_TYPES = [
+  { id: 'for-you', label: '✨ For You', placeholder: '' },
   { id: 'article', label: '📄 Article', placeholder: 'Paste article URL...' },
   { id: 'podcast', label: '🎙️ Podcast/Video', placeholder: 'Paste YouTube or podcast URL...' },
   { id: 'tweet', label: '🐦 Tweet', placeholder: 'Paste tweet/thread URL...' },
@@ -10,38 +11,56 @@ const INPUT_TYPES = [
 ]
 
 function DiscoverAgent({ onBack, onArticlesAdded }) {
-  const [inputType, setInputType] = useState('article')
+  const [inputType, setInputType] = useState('for-you')
   const [content, setContent] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
   const [savingIds, setSavingIds] = useState(new Set())
   const [savedIds, setSavedIds] = useState(new Set())
+  const [profile, setProfile] = useState(null)
 
   const handleDiscover = async () => {
-    if (!content.trim()) return
+    if (inputType !== 'for-you' && !content.trim()) return
     
     setLoading(true)
     setError(null)
     setResult(null)
     setSavedIds(new Set())
+    setProfile(null)
     
     try {
-      const res = await fetch(`${API_BASE}/agent/discover`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: content.trim(),
-          input_type: inputType,
-          max_results: 5,
-          auto_save: false,
-        }),
-      })
+      let res;
+      
+      if (inputType === 'for-you') {
+        // For You mode - analyze entire library
+        res = await fetch(`${API_BASE}/agent/for-you`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ max_results: 5 }),
+        })
+      } else {
+        // Regular discovery mode
+        res = await fetch(`${API_BASE}/agent/discover`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content: content.trim(),
+            input_type: inputType,
+            max_results: 5,
+            auto_save: false,
+          }),
+        })
+      }
       
       const data = await res.json()
       
       if (!res.ok) {
         throw new Error(data.detail || 'Discovery failed')
+      }
+      
+      if (data.profile) {
+        setProfile(data.profile)
       }
       
       setResult(data)
@@ -126,7 +145,9 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
                 onClick={() => setInputType(type.id)}
                 className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
                   inputType === type.id
-                    ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                    ? type.id === 'for-you' 
+                      ? 'bg-purple-100 text-purple-700 border border-purple-200'
+                      : 'bg-orange-100 text-orange-700 border border-orange-200'
                     : 'bg-gray-100 text-gray-600 hover:bg-gray-200 border border-transparent'
                 }`}
               >
@@ -135,39 +156,55 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
             ))}
           </div>
 
-          {/* Input Field */}
-          {inputType === 'text' ? (
-            <textarea
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder={currentInput.placeholder}
-              rows={4}
-              className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
-            />
+          {/* For You Mode */}
+          {inputType === 'for-you' ? (
+            <div className="bg-purple-50 border border-purple-100 rounded-lg p-4 mb-4">
+              <p className="text-purple-800 text-sm">
+                <strong>✨ For You</strong> analyzes your entire library to understand your reading preferences, 
+                then finds new articles you'll love.
+              </p>
+            </div>
           ) : (
-            <input
-              type="url"
-              value={content}
-              onChange={(e) => setContent(e.target.value)}
-              placeholder={currentInput.placeholder}
-              className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              onKeyDown={(e) => e.key === 'Enter' && handleDiscover()}
-            />
-          )}
-          
-          {/* Hint for podcast/video */}
-          {inputType === 'podcast' && (
-            <p className="text-xs text-gray-400 mt-2">
-              ✨ YouTube URLs will automatically extract the transcript for better recommendations
-            </p>
+            <>
+              {/* Input Field */}
+              {inputType === 'text' ? (
+                <textarea
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder={currentInput.placeholder}
+                  rows={4}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent resize-none"
+                />
+              ) : (
+                <input
+                  type="url"
+                  value={content}
+                  onChange={(e) => setContent(e.target.value)}
+                  placeholder={currentInput.placeholder}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  onKeyDown={(e) => e.key === 'Enter' && handleDiscover()}
+                />
+              )}
+              
+              {/* Hint for podcast/video */}
+              {inputType === 'podcast' && (
+                <p className="text-xs text-gray-400 mt-2">
+                  ✨ YouTube URLs will automatically extract the transcript for better recommendations
+                </p>
+              )}
+            </>
           )}
 
           {/* Discover Button */}
           <div className="flex justify-end mt-4">
             <button
               onClick={handleDiscover}
-              disabled={loading || !content.trim()}
-              className="px-6 py-3 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+              disabled={loading || (inputType !== 'for-you' && !content.trim())}
+              className={`px-6 py-3 text-white font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 ${
+                inputType === 'for-you' 
+                  ? 'bg-purple-500 hover:bg-purple-600' 
+                  : 'bg-orange-500 hover:bg-orange-600'
+              }`}
             >
               {loading ? (
                 <>
@@ -175,12 +212,12 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
                     <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                     <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                   </svg>
-                  <span>Discovering...</span>
+                  <span>{inputType === 'for-you' ? 'Analyzing...' : 'Discovering...'}</span>
                 </>
               ) : (
                 <>
-                  <span>🔍</span>
-                  <span>Find Similar Articles</span>
+                  <span>{inputType === 'for-you' ? '✨' : '🔍'}</span>
+                  <span>{inputType === 'for-you' ? 'Find Articles For Me' : 'Find Similar Articles'}</span>
                 </>
               )}
             </button>
@@ -199,34 +236,93 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-8 text-center">
             <div className="animate-pulse">
               <div className="text-4xl mb-4">🐰</div>
-              <p className="text-gray-600">Agent is searching for great reads...</p>
+              <p className="text-gray-600">
+                {inputType === 'for-you' 
+                  ? 'Analyzing your reading profile...' 
+                  : 'Agent is searching for great reads...'}
+              </p>
               <p className="text-sm text-gray-400 mt-2">This may take 15-30 seconds</p>
             </div>
+          </div>
+        )}
+
+        {/* Reading Profile (For You mode) */}
+        {profile && !loading && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-6">
+            <h3 className="font-semibold text-gray-900 mb-4">📊 Your Reading Profile</h3>
+            
+            {/* Interest Breakdown */}
+            {profile.interest_breakdown && (
+              <div className="mb-4">
+                <p className="text-sm text-gray-500 mb-2">Interest Areas</p>
+                <div className="space-y-2">
+                  {profile.interest_breakdown.map(item => (
+                    <div key={item.topic} className="flex items-center gap-3">
+                      <div className="flex-1">
+                        <div className="flex justify-between text-sm mb-1">
+                          <span className="text-gray-700">{item.topic}</span>
+                          <span className="text-gray-500">{item.percentage}%</span>
+                        </div>
+                        <div className="h-2 bg-gray-100 rounded-full overflow-hidden">
+                          <div 
+                            className="h-full bg-purple-500 rounded-full" 
+                            style={{ width: `${item.percentage}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Favorite Sources */}
+            {profile.favorite_sources?.length > 0 && (
+              <div className="mb-4">
+                <p className="text-sm text-gray-500 mb-2">Favorite Sources</p>
+                <div className="flex flex-wrap gap-2">
+                  {profile.favorite_sources.map(source => (
+                    <span key={source} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm">
+                      {source}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+            
+            {/* Profile Summary */}
+            {profile.profile_summary && (
+              <p className="text-sm text-gray-600 italic">
+                "{profile.profile_summary}"
+              </p>
+            )}
           </div>
         )}
 
         {/* Results */}
         {result && !loading && (
           <div className="space-y-6">
-            {/* Themes Found */}
-            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-              <h3 className="font-semibold text-gray-900 mb-3">🎯 Themes Identified</h3>
-              <div className="flex flex-wrap gap-2">
-                {result.themes?.main_topics?.map(topic => (
-                  <span key={topic} className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm">
-                    {topic}
-                  </span>
-                ))}
-                {result.themes?.key_concepts?.map(concept => (
-                  <span key={concept} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
-                    {concept}
-                  </span>
-                ))}
+            {/* Themes Found (non-For You mode) */}
+            {result.themes && !profile && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+                <h3 className="font-semibold text-gray-900 mb-3">🎯 Themes Identified</h3>
+                <div className="flex flex-wrap gap-2">
+                  {result.themes?.main_topics?.map(topic => (
+                    <span key={topic} className="px-3 py-1 bg-orange-100 text-orange-700 rounded-full text-sm">
+                      {topic}
+                    </span>
+                  ))}
+                  {result.themes?.key_concepts?.map(concept => (
+                    <span key={concept} className="px-3 py-1 bg-blue-100 text-blue-700 rounded-full text-sm">
+                      {concept}
+                    </span>
+                  ))}
+                </div>
+                <p className="text-sm text-gray-500 mt-3">
+                  Searched {result.searches_performed} queries • Evaluated {result.results_evaluated} results
+                </p>
               </div>
-              <p className="text-sm text-gray-500 mt-3">
-                Searched {result.searches_performed} queries • Evaluated {result.results_evaluated} results
-              </p>
-            </div>
+            )}
 
             {/* Recommendations */}
             <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
@@ -335,24 +431,45 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
         {!result && !loading && (
           <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
             <h3 className="font-semibold text-gray-900 mb-4">How it works</h3>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-              <div className="text-center p-4">
-                <div className="text-2xl mb-2">1️⃣</div>
-                <p className="text-gray-600">Paste a URL or describe what you want</p>
+            {inputType === 'for-you' ? (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">1️⃣</div>
+                  <p className="text-gray-600">Analyzes your entire library</p>
+                </div>
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">2️⃣</div>
+                  <p className="text-gray-600">Builds your reading profile</p>
+                </div>
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">3️⃣</div>
+                  <p className="text-gray-600">Searches for matching content</p>
+                </div>
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">4️⃣</div>
+                  <p className="text-gray-600">Recommends personalized articles</p>
+                </div>
               </div>
-              <div className="text-center p-4">
-                <div className="text-2xl mb-2">2️⃣</div>
-                <p className="text-gray-600">AI extracts themes and topics</p>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">1️⃣</div>
+                  <p className="text-gray-600">Paste a URL or describe what you want</p>
+                </div>
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">2️⃣</div>
+                  <p className="text-gray-600">AI extracts themes and topics</p>
+                </div>
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">3️⃣</div>
+                  <p className="text-gray-600">Agent searches for similar content</p>
+                </div>
+                <div className="text-center p-4">
+                  <div className="text-2xl mb-2">4️⃣</div>
+                  <p className="text-gray-600">Save the best ones to your library</p>
+                </div>
               </div>
-              <div className="text-center p-4">
-                <div className="text-2xl mb-2">3️⃣</div>
-                <p className="text-gray-600">Agent searches for similar content</p>
-              </div>
-              <div className="text-center p-4">
-                <div className="text-2xl mb-2">4️⃣</div>
-                <p className="text-gray-600">Save the best ones to your library</p>
-              </div>
-            </div>
+            )}
           </div>
         )}
       </main>

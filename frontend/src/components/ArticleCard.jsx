@@ -92,13 +92,13 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
 
   // Cards view - compact grid card
   return (
-    <div className="article-card bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col h-full hover:shadow-md transition-shadow">
+    <div className="article-card bg-white rounded-xl shadow-sm border border-gray-100 p-3 sm:p-5 flex flex-col h-full hover:shadow-md transition-shadow">
       {/* Source & Dismiss */}
-      <div className="flex items-center justify-between mb-3">
-        <span className="text-sm font-medium text-gray-500">{source}</span>
+      <div className="flex items-center justify-between mb-2 sm:mb-3">
+        <span className="text-xs sm:text-sm font-medium text-gray-500 truncate">{source}</span>
         <button
           onClick={() => onDismiss(article.id)}
-          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors"
+          className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded transition-colors flex-shrink-0"
           title="Don't show again"
         >
           <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -114,22 +114,22 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
         rel="noopener noreferrer"
         className="group"
       >
-        <h2 className="text-lg font-semibold text-gray-900 group-hover:text-orange-600 transition-colors mb-2 line-clamp-2 leading-snug">
+        <h2 className="text-sm sm:text-lg font-semibold text-gray-900 group-hover:text-orange-600 transition-colors mb-2 line-clamp-2 leading-snug">
           {title}
         </h2>
       </a>
 
-      {/* Summary */}
-      <p className="text-sm text-gray-600 mb-4 line-clamp-3 flex-grow leading-relaxed">
+      {/* Summary - hidden on very small screens */}
+      <p className="hidden xs:block text-xs sm:text-sm text-gray-600 mb-3 sm:mb-4 line-clamp-2 sm:line-clamp-3 flex-grow leading-relaxed">
         {summary}
       </p>
 
-      {/* Topics */}
-      <div className="flex flex-wrap gap-1.5 mb-4">
-        {topics.slice(0, 3).map((topic) => (
+      {/* Topics - show fewer on mobile */}
+      <div className="flex flex-wrap gap-1 sm:gap-1.5 mb-3 sm:mb-4">
+        {topics.slice(0, 2).map((topic) => (
           <span
             key={topic}
-            className="px-2 py-0.5 text-xs font-medium text-gray-500 bg-gray-100 rounded-full"
+            className="px-1.5 sm:px-2 py-0.5 text-xs font-medium text-gray-500 bg-gray-100 rounded-full"
           >
             {topic}
           </span>
@@ -137,15 +137,9 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
       </div>
 
       {/* Meta */}
-      <div className="flex items-center text-sm text-gray-500 mb-4 pt-3 border-t border-gray-100">
-        {author && author !== source && (
-          <>
-            <span className="truncate">{author}</span>
-            <span className="mx-2">·</span>
-          </>
-        )}
+      <div className="flex items-center text-xs sm:text-sm text-gray-500 mb-3 sm:mb-4 pt-2 sm:pt-3 border-t border-gray-100">
         <div className="flex items-center gap-1">
-          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-3 h-3 sm:w-4 sm:h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
           <span>{read_time} min</span>
@@ -156,14 +150,14 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
       <div className="flex gap-2">
         <button
           onClick={() => onSave(article)}
-          className={`p-2 rounded-lg transition-colors ${
+          className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
             isSaved 
               ? 'bg-gray-900 text-white' 
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
           title={isSaved ? 'Saved' : 'Save'}
         >
-          <svg className="w-5 h-5" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
           </svg>
         </button>
@@ -171,7 +165,7 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex-1 text-center py-2 px-4 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors"
+          className="flex-1 text-center py-1.5 sm:py-2 px-3 sm:px-4 bg-orange-500 text-white text-xs sm:text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors"
         >
           Read
         </a>

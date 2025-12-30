@@ -101,41 +101,44 @@ function App() {
     }
   }
 
-  // View mode icons
+  // View mode icons - responsive (icons only on mobile, with text on desktop)
   const ViewToggle = () => (
     <div className="flex items-center bg-gray-100 rounded-lg p-1">
       <button
         onClick={() => setViewMode('single')}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
           viewMode === 'single' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
         }`}
+        title="Single"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h7" />
         </svg>
-        Single
+        <span className="hidden sm:inline">Single</span>
       </button>
       <button
         onClick={() => setViewMode('cards')}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
           viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
         }`}
+        title="Cards"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
         </svg>
-        Cards
+        <span className="hidden sm:inline">Cards</span>
       </button>
       <button
         onClick={() => setViewMode('feed')}
-        className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
           viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
         }`}
+        title="Feed"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
         </svg>
-        Feed
+        <span className="hidden sm:inline">Feed</span>
       </button>
     </div>
   )
@@ -194,13 +197,13 @@ function App() {
             {/* Logo */}
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
-                <span className="text-orange-600 font-bold text-lg">📖</span>
+                <span className="text-orange-600 font-bold text-lg">🐰</span>
               </div>
-              <span className="text-xl font-bold text-gray-900">ReadRabbit</span>
+              <span className="text-xl font-bold text-gray-900 hidden xs:inline sm:inline">ReadRabbit</span>
             </div>
 
             {/* View Toggle + Actions */}
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1 sm:gap-3">
               <ViewToggle />
               <button
                 onClick={() => setShowAgent(true)}
@@ -297,7 +300,7 @@ function App() {
           </div>
         ) : (
           /* Cards View (default) */
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-5">
+          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
             {displayArticles.map((article) => (
               <ArticleCard
                 key={article.id}

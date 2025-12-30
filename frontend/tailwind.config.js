@@ -10,6 +10,9 @@ export default {
         sans: ['Inter', 'system-ui', 'sans-serif'],
         serif: ['Georgia', 'Cambria', 'serif'],
       },
+      screens: {
+        'xs': '400px',
+      },
     },
   },
   plugins: [],
