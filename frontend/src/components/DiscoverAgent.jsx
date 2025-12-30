@@ -387,7 +387,6 @@ function DiscoverAgent({ onBack, onArticlesAdded }) {
                                 <span key={topic} className="px-1.5 sm:px-2 py-0.5 bg-gray-100 text-gray-600 rounded text-xs">
                                   {topic}
                                 </span>
-                                </span>
                               ))}
                             </div>
                           )}
