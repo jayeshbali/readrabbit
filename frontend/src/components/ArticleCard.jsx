@@ -78,10 +78,13 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           </div>
         </div>
 
-        {/* Card */}
-        <div 
+        {/* Card - clickable */}
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
           ref={cardRef}
-          className="bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-8 max-w-2xl mx-auto transition-transform relative z-10"
+          className="block bg-white rounded-2xl shadow-sm border border-gray-100 p-4 sm:p-8 max-w-2xl mx-auto transition-transform relative z-10 hover:shadow-md"
           style={{ 
             transform: `translateX(${swipeX}px) rotate(${swipeX * 0.03}deg)`,
             transition: swiping ? 'none' : 'transform 0.3s ease-out'
@@ -89,12 +92,18 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           onTouchStart={handleTouchStart}
           onTouchMove={handleTouchMove}
           onTouchEnd={handleTouchEnd}
+          onClick={(e) => {
+            // Prevent navigation if swiping
+            if (Math.abs(swipeX) > 10) {
+              e.preventDefault()
+            }
+          }}
         >
           {/* Source & Dismiss */}
           <div className="flex items-center justify-between mb-3 sm:mb-4">
             <span className="text-xs sm:text-sm font-medium text-gray-500">{source}</span>
             <button
-              onClick={() => { vibrate(); onDismiss(article.id) }}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); vibrate(); onDismiss(article.id) }}
               className="p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               title="Don't show again"
             >
@@ -105,7 +114,7 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           </div>
 
           {/* Title */}
-          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 sm:mb-3 leading-tight">
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900 mb-2 sm:mb-3 leading-tight group-hover:text-orange-600">
             {title}
           </h2>
 
@@ -127,7 +136,7 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           </div>
 
           {/* Meta */}
-          <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-gray-500 mb-4 sm:mb-6">
+          <div className="flex items-center gap-2 sm:gap-3 text-xs sm:text-sm text-gray-500">
             {author && author !== source && (
               <>
                 <span>{author}</span>
@@ -141,72 +150,28 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
               <span>{read_time} min</span>
             </div>
           </div>
+        </a>
 
-          {/* Swipe hint - mobile only */}
-          <div className="flex items-center justify-center gap-6 text-xs text-gray-400 mb-4 sm:hidden">
-            <span className="flex items-center gap-1">
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 19l-7-7m0 0l7-7m-7 7h18" />
-              </svg>
-              Skip
-            </span>
-            <span className="flex items-center gap-1">
-              Save
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            </span>
-          </div>
-
-          {/* Desktop Actions - hidden on mobile (using bottom bar instead) */}
-          <div className="hidden sm:flex gap-3">
-            <button
-              onClick={() => { vibrate(); onSave(article) }}
-              className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-medium transition-colors ${
-                isSaved 
-                  ? 'bg-gray-900 text-white' 
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              <svg className="w-5 h-5" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-              </svg>
-              {isSaved ? 'Saved' : 'Save'}
-            </button>
-            <a
-              href={url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex-1 text-center py-2.5 px-6 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 transition-colors flex items-center justify-center gap-2"
-            >
-              Read
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
-              </svg>
-            </a>
-          </div>
-        </div>
-
-        {/* Mobile Bottom Action Bar - fixed at bottom */}
-        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-4 py-3 flex gap-3 sm:hidden z-50 safe-bottom">
+        {/* Mobile Bottom Action Bar - fixed at bottom, equal size buttons */}
+        <div className="fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 px-3 py-2 flex gap-2 sm:hidden z-50 safe-bottom">
           <button
             onClick={() => { vibrate([10, 50, 10]); onDismiss(article.id) }}
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-gray-100 text-gray-700 font-medium rounded-xl active:scale-95 transition-transform"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-gray-100 text-gray-700 text-sm font-medium rounded-xl active:scale-95 transition-transform"
           >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
             </svg>
             Skip
           </button>
           <button
             onClick={() => { vibrate(15); onSave(article) }}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 font-medium rounded-xl active:scale-95 transition-transform ${
+            className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium rounded-xl active:scale-95 transition-transform ${
               isSaved 
                 ? 'bg-gray-900 text-white' 
                 : 'bg-gray-100 text-gray-700'
             }`}
           >
-            <svg className="w-5 h-5" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+            <svg className="w-4 h-4" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
             </svg>
             {isSaved ? 'Saved' : 'Save'}
@@ -215,7 +180,7 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
             href={url}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex-1 flex items-center justify-center gap-2 py-3 bg-orange-500 text-white font-medium rounded-xl active:scale-95 transition-transform"
+            className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-orange-500 text-white text-sm font-medium rounded-xl active:scale-95 transition-transform"
           >
             Read
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -223,9 +188,35 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
             </svg>
           </a>
         </div>
+
+        {/* Desktop Actions */}
+        <div className="hidden sm:flex gap-3 max-w-2xl mx-auto mt-4">
+          <button
+            onClick={() => { vibrate(); onSave(article) }}
+            className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-medium transition-colors ${
+              isSaved 
+                ? 'bg-gray-900 text-white' 
+                : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            <svg className="w-5 h-5" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+            </svg>
+            {isSaved ? 'Saved' : 'Save'}
+          </button>
+          <button
+            onClick={() => { vibrate(); onDismiss(article.id) }}
+            className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-medium bg-gray-100 text-gray-700 hover:bg-gray-200 transition-colors"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+            Skip
+          </button>
+        </div>
         
         {/* Spacer for bottom bar on mobile */}
-        <div className="h-20 sm:hidden"></div>
+        <div className="h-16 sm:hidden"></div>
       </div>
     )
   }
@@ -286,28 +277,41 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex gap-2">
+      {/* Actions - standardized sizes */}
+      <div className="flex gap-2 mt-auto">
         <button
-          onClick={() => onSave(article)}
-          className={`p-1.5 sm:p-2 rounded-lg transition-colors ${
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSave(article) }}
+          className={`flex items-center justify-center gap-1 px-2.5 py-2 rounded-lg transition-colors text-sm ${
             isSaved 
               ? 'bg-gray-900 text-white' 
               : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
           }`}
           title={isSaved ? 'Saved' : 'Save'}
         >
-          <svg className="w-4 h-4 sm:w-5 sm:h-5" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
+          <svg className="w-4 h-4" fill={isSaved ? "currentColor" : "none"} stroke="currentColor" viewBox="0 0 24 24">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+          </svg>
+        </button>
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onDismiss(article.id) }}
+          className="flex items-center justify-center gap-1 px-2.5 py-2 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors text-sm"
+          title="Skip"
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
         <a
           href={url}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex-1 text-center py-1.5 sm:py-2 px-3 sm:px-4 bg-orange-500 text-white text-xs sm:text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors"
+          onClick={(e) => e.stopPropagation()}
+          className="flex-1 flex items-center justify-center gap-1 py-2 px-3 bg-orange-500 text-white text-sm font-medium rounded-lg hover:bg-orange-600 transition-colors"
         >
           Read
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14 5l7 7m0 0l-7 7m7-7H3" />
+          </svg>
         </a>
       </div>
     </div>

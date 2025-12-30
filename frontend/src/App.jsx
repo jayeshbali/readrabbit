@@ -11,10 +11,11 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [shuffling, setShuffling] = useState(false)
+  const [serverWaking, setServerWaking] = useState(false)
   
   // UI State
   const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'saved'
-  const [viewMode, setViewMode] = useState('cards') // 'single' | 'cards' | 'feed'
+  const [viewMode, setViewMode] = useState('feed') // 'single' | 'cards' | 'feed'
   const [singleIndex, setSingleIndex] = useState(0) // For single view navigation
   const [showAdmin, setShowAdmin] = useState(false) // Admin page toggle
   const [showAgent, setShowAgent] = useState(false) // Discovery agent toggle
@@ -27,6 +28,9 @@ function App() {
   const [isPulling, setIsPulling] = useState(false)
   const mainRef = useRef(null)
   const touchStartY = useRef(0)
+  
+  // Track load time for "waking up" message
+  const loadStartTime = useRef(Date.now())
 
   // Show toast notification
   const showToast = (message, type = 'success') => {
@@ -47,9 +51,22 @@ function App() {
     localStorage.setItem('readrabbit_saved', JSON.stringify(savedArticles))
   }, [savedArticles])
 
+  // Show "waking up" message if loading takes > 3 seconds
+  useEffect(() => {
+    if (loading) {
+      const timer = setTimeout(() => {
+        setServerWaking(true)
+      }, 3000)
+      return () => clearTimeout(timer)
+    } else {
+      setServerWaking(false)
+    }
+  }, [loading])
+
   const fetchArticles = useCallback(async () => {
     try {
       setShuffling(true)
+      loadStartTime.current = Date.now()
       const count = viewMode === 'single' ? 1 : viewMode === 'feed' ? 8 : 4
       const response = await fetch(`${API_BASE}/articles/random?count=${count}`)
       if (!response.ok) throw new Error('Failed to fetch articles')
@@ -245,6 +262,15 @@ function App() {
 
         {/* Content skeleton */}
         <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
+          {/* Waking up message */}
+          {serverWaking && (
+            <div className="text-center mb-6 animate-fade-in">
+              <p className="text-sm text-gray-500">
+                <span className="inline-block animate-pulse">☕</span> Waking up server... This may take up to 30 seconds
+              </p>
+            </div>
+          )}
+          
           <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
             {[1, 2, 3, 4].map((i) => (
               <SkeletonCard key={i} />
@@ -496,8 +522,8 @@ function App() {
           </div>
         )}
 
-        {/* Show More Button - only on Discover tab */}
-        {activeTab === 'discover' && (
+        {/* Show More Button - only on Discover tab, not in single view */}
+        {activeTab === 'discover' && viewMode !== 'single' && (
           <div className="flex justify-center mt-8 sm:mt-10">
             <button
               onClick={handleShowMore}
