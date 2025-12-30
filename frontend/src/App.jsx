@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback, useRef } from 'react'
 import ArticleCard from './components/ArticleCard'
 import AdminPage from './components/AdminPage'
 import DiscoverAgent from './components/DiscoverAgent'
@@ -18,6 +18,21 @@ function App() {
   const [singleIndex, setSingleIndex] = useState(0) // For single view navigation
   const [showAdmin, setShowAdmin] = useState(false) // Admin page toggle
   const [showAgent, setShowAgent] = useState(false) // Discovery agent toggle
+  
+  // Toast notification state
+  const [toast, setToast] = useState(null)
+  
+  // Pull to refresh state
+  const [pullDistance, setPullDistance] = useState(0)
+  const [isPulling, setIsPulling] = useState(false)
+  const mainRef = useRef(null)
+  const touchStartY = useRef(0)
+
+  // Show toast notification
+  const showToast = (message, type = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 2500)
+  }
 
   // Load saved articles from localStorage on mount
   useEffect(() => {
@@ -47,6 +62,8 @@ function App() {
     } finally {
       setLoading(false)
       setShuffling(false)
+      setPullDistance(0)
+      setIsPulling(false)
     }
   }, [viewMode])
 
@@ -54,19 +71,44 @@ function App() {
     fetchArticles()
   }, [fetchArticles])
 
+  // Pull to refresh handlers
+  const handleTouchStart = (e) => {
+    if (mainRef.current?.scrollTop === 0) {
+      touchStartY.current = e.touches[0].clientY
+    }
+  }
+
+  const handleTouchMove = (e) => {
+    if (mainRef.current?.scrollTop === 0 && touchStartY.current > 0) {
+      const distance = e.touches[0].clientY - touchStartY.current
+      if (distance > 0 && distance < 150) {
+        setPullDistance(distance)
+        setIsPulling(true)
+      }
+    }
+  }
+
+  const handleTouchEnd = () => {
+    if (pullDistance > 80) {
+      fetchArticles()
+      showToast('Refreshing...', 'info')
+    }
+    setPullDistance(0)
+    setIsPulling(false)
+    touchStartY.current = 0
+  }
+
   const handleDismiss = async (articleId) => {
     try {
       await fetch(`${API_BASE}/articles/${articleId}/dismiss`, { method: 'POST' })
       
       if (viewMode === 'single') {
-        // Fetch a new article to replace
         const response = await fetch(`${API_BASE}/articles/random?count=1`)
         const data = await response.json()
         if (data.articles.length > 0) {
           setArticles(data.articles)
         }
       } else {
-        // Replace the dismissed article
         const response = await fetch(`${API_BASE}/articles/random?count=1`)
         const data = await response.json()
         if (data.articles.length > 0) {
@@ -75,6 +117,7 @@ function App() {
           )
         }
       }
+      showToast('Article dismissed')
     } catch (err) {
       console.error('Failed to dismiss article:', err)
     }
@@ -84,8 +127,10 @@ function App() {
     const isAlreadySaved = savedArticles.some((a) => a.id === article.id)
     if (isAlreadySaved) {
       setSavedArticles((prev) => prev.filter((a) => a.id !== article.id))
+      showToast('Removed from saved')
     } else {
       setSavedArticles((prev) => [...prev, article])
+      showToast('Saved for later! 🐰')
     }
   }
 
@@ -101,13 +146,13 @@ function App() {
     }
   }
 
-  // View mode icons - responsive (icons only on mobile, with text on desktop)
+  // View mode icons - responsive
   const ViewToggle = () => (
     <div className="flex items-center bg-gray-100 rounded-lg p-1">
       <button
         onClick={() => setViewMode('single')}
-        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-          viewMode === 'single' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
+          viewMode === 'single' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
         }`}
         title="Single"
       >
@@ -118,8 +163,8 @@ function App() {
       </button>
       <button
         onClick={() => setViewMode('cards')}
-        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-          viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
+          viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
         }`}
         title="Cards"
       >
@@ -130,8 +175,8 @@ function App() {
       </button>
       <button
         onClick={() => setViewMode('feed')}
-        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
-          viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
+          viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
         }`}
         title="Feed"
       >
@@ -143,22 +188,33 @@ function App() {
     </div>
   )
 
+  // Loading state with animation
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-gray-500">Loading your reading list...</div>
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
+        <div className="relative">
+          <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center animate-bounce">
+            <span className="text-3xl">🐰</span>
+          </div>
+        </div>
+        <p className="mt-4 text-gray-500 animate-pulse">Loading your reading list...</p>
       </div>
     )
   }
 
+  // Error state with better styling
   if (error) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <p className="text-red-500 mb-4">{error}</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50 px-4">
+        <div className="text-center max-w-sm">
+          <div className="w-16 h-16 bg-red-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+            <span className="text-3xl">😵</span>
+          </div>
+          <h2 className="text-lg font-semibold text-gray-900 mb-2">Oops! Something went wrong</h2>
+          <p className="text-gray-500 mb-6 text-sm">{error}</p>
           <button
             onClick={fetchArticles}
-            className="px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800"
+            className="px-6 py-3 bg-orange-500 text-white font-medium rounded-xl hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
           >
             Try Again
           </button>
@@ -173,7 +229,7 @@ function App() {
   if (showAdmin) {
     return <AdminPage onBack={() => {
       setShowAdmin(false)
-      fetchArticles() // Refresh articles when returning
+      fetchArticles()
     }} />
   }
 
@@ -182,33 +238,68 @@ function App() {
     return <DiscoverAgent 
       onBack={() => {
         setShowAgent(false)
-        fetchArticles() // Refresh articles when returning
+        fetchArticles()
       }}
-      onArticlesAdded={fetchArticles}
+      onArticlesAdded={() => {
+        fetchArticles()
+        showToast('Articles added!')
+      }}
     />
   }
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Toast Notification */}
+      {toast && (
+        <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full shadow-lg text-sm font-medium animate-fade-in ${
+          toast.type === 'success' ? 'bg-gray-900 text-white' :
+          toast.type === 'error' ? 'bg-red-500 text-white' :
+          'bg-white text-gray-900 border border-gray-200'
+        }`}>
+          {toast.message}
+        </div>
+      )}
+
+      {/* Pull to Refresh Indicator */}
+      {isPulling && (
+        <div 
+          className="fixed top-0 left-0 right-0 flex justify-center z-40 transition-transform"
+          style={{ transform: `translateY(${Math.min(pullDistance - 40, 30)}px)` }}
+        >
+          <div className={`w-10 h-10 bg-white rounded-full shadow-lg flex items-center justify-center transition-transform ${
+            pullDistance > 80 ? 'scale-110' : ''
+          }`}>
+            <svg 
+              className={`w-5 h-5 text-orange-500 transition-transform ${pullDistance > 80 ? 'rotate-180' : ''}`} 
+              fill="none" 
+              stroke="currentColor" 
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
+            </svg>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <header className="bg-white border-b border-gray-200">
-        <div className="max-w-6xl mx-auto px-4 py-4">
+      <header className="bg-white border-b border-gray-200 sticky top-0 z-30">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
           <div className="flex items-center justify-between">
-            {/* Logo */}
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 bg-orange-100 rounded-lg flex items-center justify-center">
-                <span className="text-orange-600 font-bold text-lg">🐰</span>
+            {/* Logo - clickable */}
+            <a href="/" className="flex items-center gap-2 group">
+              <div className="w-9 h-9 sm:w-10 sm:h-10 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/20 group-hover:scale-105 transition-transform">
+                <span className="text-xl sm:text-2xl">🐰</span>
               </div>
-              <span className="text-xl font-bold text-gray-900 hidden xs:inline sm:inline">ReadRabbit</span>
-            </div>
+              <span className="text-lg sm:text-xl font-bold text-gray-900 hidden xs:inline">ReadRabbit</span>
+            </a>
 
             {/* View Toggle + Actions */}
-            <div className="flex items-center gap-1 sm:gap-3">
+            <div className="flex items-center gap-1 sm:gap-2">
               <ViewToggle />
               <button
                 onClick={() => setShowAgent(true)}
-                className="p-2 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-lg"
-                title="Discovery Agent"
+                className="p-2 sm:p-2.5 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-colors"
+                title="Discover"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -216,12 +307,11 @@ function App() {
               </button>
               <button
                 onClick={() => setShowAdmin(true)}
-                className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
+                className="p-2 sm:p-2.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
                 title="Admin"
               >
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                 </svg>
               </button>
             </div>
@@ -230,50 +320,69 @@ function App() {
       </header>
 
       {/* Tabs */}
-      <div className="max-w-6xl mx-auto px-4 pt-6">
-        <div className="flex justify-center">
-          <div className="inline-flex bg-gray-100 rounded-full p-1">
-            <button
-              onClick={() => setActiveTab('discover')}
-              className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${
-                activeTab === 'discover'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Discover
-            </button>
-            <button
-              onClick={() => setActiveTab('saved')}
-              className={`px-6 py-2 rounded-full text-sm font-medium transition-colors ${
-                activeTab === 'saved'
-                  ? 'bg-white text-gray-900 shadow-sm'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              Saved ({savedArticles.length})
-            </button>
+      <div className="bg-white border-b border-gray-100 sticky top-[57px] sm:top-[65px] z-20">
+        <div className="max-w-6xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
+          <div className="flex justify-center">
+            <div className="inline-flex bg-gray-100 rounded-full p-1">
+              <button
+                onClick={() => setActiveTab('discover')}
+                className={`px-4 sm:px-6 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'discover'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Discover
+              </button>
+              <button
+                onClick={() => setActiveTab('saved')}
+                className={`px-4 sm:px-6 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                  activeTab === 'saved'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Saved
+                {savedArticles.length > 0 && (
+                  <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                    activeTab === 'saved' ? 'bg-orange-100 text-orange-600' : 'bg-gray-200 text-gray-600'
+                  }`}>
+                    {savedArticles.length}
+                  </span>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="max-w-6xl mx-auto px-4 py-8">
+      <main 
+        ref={mainRef}
+        className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-8"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
         {activeTab === 'saved' && savedArticles.length === 0 ? (
-          <div className="text-center py-16">
-            <div className="text-6xl mb-4">📚</div>
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No saved articles yet</h3>
-            <p className="text-gray-500 mb-6">Save articles you want to read later</p>
+          <div className="text-center py-12 sm:py-16">
+            <div className="w-20 h-20 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <span className="text-4xl">📚</span>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">No saved articles yet</h3>
+            <p className="text-gray-500 mb-6 text-sm max-w-xs mx-auto">
+              Tap the bookmark icon on articles you want to read later
+            </p>
             <button
               onClick={() => setActiveTab('discover')}
-              className="px-5 py-2 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 transition-colors"
+              className="px-6 py-3 bg-orange-500 text-white font-medium rounded-xl hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
             >
               Discover Articles
             </button>
           </div>
         ) : viewMode === 'single' ? (
           /* Single View */
-          <div className="py-4">
+          <div className="py-2 sm:py-4">
             {displayArticles.length > 0 && (
               <ArticleCard
                 article={activeTab === 'saved' ? displayArticles[singleIndex % displayArticles.length] : displayArticles[0]}
@@ -286,47 +395,75 @@ function App() {
           </div>
         ) : viewMode === 'feed' ? (
           /* Feed View */
-          <div className="max-w-2xl mx-auto space-y-4">
-            {displayArticles.map((article) => (
-              <ArticleCard
+          <div className="max-w-2xl mx-auto space-y-3 sm:space-y-4">
+            {displayArticles.map((article, index) => (
+              <div 
                 key={article.id}
-                article={article}
-                onDismiss={handleDismiss}
-                onSave={handleSave}
-                isSaved={isArticleSaved(article.id)}
-                viewMode="cards"
-              />
+                className="animate-fade-in"
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
+                <ArticleCard
+                  article={article}
+                  onDismiss={handleDismiss}
+                  onSave={handleSave}
+                  isSaved={isArticleSaved(article.id)}
+                  viewMode="cards"
+                />
+              </div>
             ))}
           </div>
         ) : (
           /* Cards View (default) */
           <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
-            {displayArticles.map((article) => (
-              <ArticleCard
+            {displayArticles.map((article, index) => (
+              <div 
                 key={article.id}
-                article={article}
-                onDismiss={handleDismiss}
-                onSave={handleSave}
-                isSaved={isArticleSaved(article.id)}
-                viewMode="cards"
-              />
+                className="animate-fade-in"
+                style={{ animationDelay: `${index * 50}ms` }}
+              >
+                <ArticleCard
+                  article={article}
+                  onDismiss={handleDismiss}
+                  onSave={handleSave}
+                  isSaved={isArticleSaved(article.id)}
+                  viewMode="cards"
+                />
+              </div>
             ))}
           </div>
         )}
 
         {/* Show More Button - only on Discover tab */}
         {activeTab === 'discover' && (
-          <div className="flex justify-center mt-10">
+          <div className="flex justify-center mt-8 sm:mt-10">
             <button
               onClick={handleShowMore}
               disabled={shuffling}
-              className="px-6 py-3 text-gray-700 font-medium hover:text-gray-900 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="group px-6 py-3 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:border-orange-300 hover:text-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-sm hover:shadow-md flex items-center gap-2"
             >
-              {shuffling ? 'Loading...' : 'Show me more'}
+              {shuffling ? (
+                <>
+                  <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Loading...</span>
+                </>
+              ) : (
+                <>
+                  <span>Show me more</span>
+                  <svg className="w-4 h-4 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+                  </svg>
+                </>
+              )}
             </button>
           </div>
         )}
       </main>
+
+      {/* Bottom safe area for mobile */}
+      <div className="h-6 sm:h-0"></div>
     </div>
   )
 }
