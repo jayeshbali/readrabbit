@@ -207,9 +207,9 @@ function AdminPage({ onBack }) {
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white border-b border-gray-200">
-        <div className="max-w-4xl mx-auto px-4 py-4">
+        <div className="max-w-4xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-2 sm:gap-3">
               <button
                 onClick={onBack}
                 className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-lg"
@@ -218,11 +218,11 @@ function AdminPage({ onBack }) {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                 </svg>
               </button>
-              <h1 className="text-xl font-bold text-gray-900">Admin</h1>
+              <h1 className="text-lg sm:text-xl font-bold text-gray-900">Admin</h1>
             </div>
             
             {stats && (
-              <div className="text-sm text-gray-500">
+              <div className="text-xs sm:text-sm text-gray-500">
                 {stats.total_articles} articles
               </div>
             )}
@@ -230,17 +230,17 @@ function AdminPage({ onBack }) {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-8">
+      <main className="max-w-4xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
         {/* Add Article Section */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6 mb-8">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-gray-900">Add Article</h2>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6 sm:mb-8">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Add Article</h2>
             
             {/* Mode Toggle */}
             <div className="flex items-center bg-gray-100 rounded-lg p-1">
               <button
                 onClick={() => setAddMode('ai')}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   addMode === 'ai' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -248,7 +248,7 @@ function AdminPage({ onBack }) {
               </button>
               <button
                 onClick={() => setAddMode('manual')}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   addMode === 'manual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
@@ -259,14 +259,14 @@ function AdminPage({ onBack }) {
 
           {/* Error */}
           {error && (
-            <div className="p-3 bg-red-50 text-red-700 rounded-lg mb-4">
+            <div className="p-3 bg-red-50 text-red-700 rounded-lg mb-4 text-sm">
               {error}
             </div>
           )}
 
           {/* Success */}
           {success && (
-            <div className="p-3 bg-green-50 text-green-700 rounded-lg mb-4">
+            <div className="p-3 bg-green-50 text-green-700 rounded-lg mb-4 text-sm">
               ✓ {success}
             </div>
           )}
@@ -275,35 +275,37 @@ function AdminPage({ onBack }) {
           {addMode === 'ai' && (
             <>
               {/* URL Input */}
-              <div className="flex gap-3 mb-4">
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4">
                 <input
                   type="url"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="Paste article URL..."
-                  className="flex-1 px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  className="flex-1 px-3 sm:px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm sm:text-base"
                   onKeyDown={(e) => e.key === 'Enter' && handleExtract()}
                 />
-                <button
-                  onClick={handleExtract}
-                  disabled={loading || !url.trim()}
-                  className="px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  Preview
-                </button>
-                <button
-                  onClick={handleQuickAdd}
-                  disabled={loading || !url.trim()}
-                  className="px-5 py-2.5 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                >
-                  {loading ? 'Adding...' : 'Quick Add'}
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={handleExtract}
+                    disabled={loading || !url.trim()}
+                    className="flex-1 sm:flex-none px-4 sm:px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                  >
+                    Preview
+                  </button>
+                  <button
+                    onClick={handleQuickAdd}
+                    disabled={loading || !url.trim()}
+                    className="flex-1 sm:flex-none px-4 sm:px-5 py-2.5 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                  >
+                    {loading ? 'Adding...' : 'Quick Add'}
+                  </button>
+                </div>
               </div>
 
               {/* Preview */}
               {preview && (
-                <div className="border border-gray-200 rounded-lg p-4 bg-gray-50">
-                  <h3 className="font-semibold text-gray-900 mb-2">Preview</h3>
+                <div className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-gray-50">
+                  <h3 className="font-semibold text-gray-900 mb-2 text-sm sm:text-base">Preview</h3>
                   
                   <div className="space-y-3 mb-4">
                     <div>
@@ -312,18 +314,18 @@ function AdminPage({ onBack }) {
                         type="text"
                         value={preview.title || ''}
                         onChange={(e) => setPreview({...preview, title: e.target.value})}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                       />
                     </div>
                     
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs text-gray-500 uppercase tracking-wide">Source</label>
                         <input
                           type="text"
                           value={preview.source || ''}
                           onChange={(e) => setPreview({...preview, source: e.target.value})}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                         />
                       </div>
                       <div>
@@ -332,7 +334,7 @@ function AdminPage({ onBack }) {
                           type="text"
                           value={preview.author || ''}
                           onChange={(e) => setPreview({...preview, author: e.target.value})}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                         />
                       </div>
                     </div>
@@ -343,18 +345,18 @@ function AdminPage({ onBack }) {
                         value={preview.summary || ''}
                         onChange={(e) => setPreview({...preview, summary: e.target.value})}
                         rows={2}
-                        className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1"
+                        className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                       />
                     </div>
 
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs text-gray-500 uppercase tracking-wide">Topics (comma-separated)</label>
                         <input
                           type="text"
                           value={(preview.topics || []).join(', ')}
                           onChange={(e) => setPreview({...preview, topics: e.target.value.split(',').map(t => t.trim()).filter(Boolean)})}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                         />
                       </div>
                       <div>
@@ -363,7 +365,7 @@ function AdminPage({ onBack }) {
                           type="number"
                           value={preview.read_time || ''}
                           onChange={(e) => setPreview({...preview, read_time: parseInt(e.target.value) || null})}
-                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1"
+                          className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                         />
                       </div>
                     </div>
@@ -372,14 +374,14 @@ function AdminPage({ onBack }) {
                   <div className="flex justify-end gap-3">
                     <button
                       onClick={() => setPreview(null)}
-                      className="px-4 py-2 text-gray-600 hover:text-gray-800"
+                      className="px-4 py-2 text-gray-600 hover:text-gray-800 text-sm"
                     >
                       Cancel
                     </button>
                     <button
                       onClick={handleSave}
                       disabled={loading}
-                      className="px-5 py-2 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50"
+                      className="px-4 sm:px-5 py-2 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 text-sm"
                     >
                       Save Article
                     </button>
@@ -391,7 +393,7 @@ function AdminPage({ onBack }) {
 
           {/* Manual Mode */}
           {addMode === 'manual' && (
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               <div>
                 <label className="text-xs text-gray-500 uppercase tracking-wide">URL *</label>
                 <input
@@ -399,7 +401,7 @@ function AdminPage({ onBack }) {
                   value={manualForm.url}
                   onChange={(e) => setManualForm({...manualForm, url: e.target.value})}
                   placeholder="https://example.com/article"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                 />
               </div>
 
@@ -410,19 +412,19 @@ function AdminPage({ onBack }) {
                   value={manualForm.title}
                   onChange={(e) => setManualForm({...manualForm, title: e.target.value})}
                   placeholder="Article title"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                 />
               </div>
               
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-gray-500 uppercase tracking-wide">Source</label>
                   <input
                     type="text"
                     value={manualForm.source}
                     onChange={(e) => setManualForm({...manualForm, source: e.target.value})}
-                    placeholder="e.g., Paul Graham, The New Yorker"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    placeholder="e.g., Paul Graham"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                   />
                 </div>
                 <div>
@@ -432,7 +434,7 @@ function AdminPage({ onBack }) {
                     value={manualForm.author}
                     onChange={(e) => setManualForm({...manualForm, author: e.target.value})}
                     placeholder="Author name"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                   />
                 </div>
               </div>
@@ -443,20 +445,20 @@ function AdminPage({ onBack }) {
                   value={manualForm.summary}
                   onChange={(e) => setManualForm({...manualForm, summary: e.target.value})}
                   rows={2}
-                  placeholder="Brief description that makes someone want to read it"
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                  placeholder="Brief description"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-xs text-gray-500 uppercase tracking-wide">Topics (comma-separated)</label>
                   <input
                     type="text"
                     value={manualForm.topics.join(', ')}
                     onChange={(e) => setManualForm({...manualForm, topics: e.target.value.split(',').map(t => t.trim()).filter(Boolean)})}
-                    placeholder="AI, Productivity, Career"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    placeholder="AI, Productivity"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                   />
                 </div>
                 <div>
@@ -466,7 +468,7 @@ function AdminPage({ onBack }) {
                     value={manualForm.read_time || ''}
                     onChange={(e) => setManualForm({...manualForm, read_time: parseInt(e.target.value) || null})}
                     placeholder="10"
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500"
+                    className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
                   />
                 </div>
               </div>
@@ -475,7 +477,7 @@ function AdminPage({ onBack }) {
                 <button
                   onClick={handleManualSave}
                   disabled={loading || !manualForm.title.trim() || !manualForm.url.trim()}
-                  className="px-6 py-2.5 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                  className="w-full sm:w-auto px-6 py-2.5 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
                 >
                   {loading ? 'Saving...' : 'Save Article'}
                 </button>
@@ -485,45 +487,44 @@ function AdminPage({ onBack }) {
         </div>
 
         {/* Articles List */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
-          <h2 className="text-lg font-semibold text-gray-900 mb-4">All Articles ({articles.length})</h2>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+          <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">All Articles ({articles.length})</h2>
           
-          <div className="space-y-3">
+          <div className="space-y-2 sm:space-y-3">
             {articles.map((article) => (
               <div 
                 key={article.id}
-                className="flex items-center justify-between p-3 bg-gray-50 rounded-lg"
+                className="flex items-start sm:items-center justify-between p-2 sm:p-3 bg-gray-50 rounded-lg gap-2"
               >
                 <div className="flex-1 min-w-0">
                   <a 
                     href={article.url}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="font-medium text-gray-900 hover:text-orange-600 truncate block"
+                    className="font-medium text-gray-900 hover:text-orange-600 text-sm sm:text-base line-clamp-1"
                   >
                     {article.title}
                   </a>
-                  <div className="text-sm text-gray-500 flex items-center gap-2 mt-1">
-                    <span>{article.source}</span>
+                  <div className="text-xs sm:text-sm text-gray-500 flex flex-wrap items-center gap-1 sm:gap-2 mt-1">
+                    <span className="truncate max-w-[100px] sm:max-w-none">{article.source}</span>
                     {article.read_time && (
                       <>
                         <span>·</span>
-                        <span>{article.read_time} min</span>
+                        <span>{article.read_time}m</span>
                       </>
                     )}
-                    <span>·</span>
-                    <span className={`text-xs px-2 py-0.5 rounded-full ${
+                    <span className={`text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${
                       article.source_type === 'AI Suggested' 
                         ? 'bg-purple-100 text-purple-700' 
                         : 'bg-gray-200 text-gray-600'
                     }`}>
-                      {article.source_type}
+                      {article.source_type === 'AI Suggested' ? 'AI' : 'Manual'}
                     </span>
                   </div>
                 </div>
                 <button
                   onClick={() => handleDelete(article.id, article.title)}
-                  className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg ml-3"
+                  className="p-1.5 sm:p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg flex-shrink-0"
                 >
                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -533,7 +534,7 @@ function AdminPage({ onBack }) {
             ))}
             
             {articles.length === 0 && (
-              <p className="text-gray-500 text-center py-8">No articles yet. Add your first one above!</p>
+              <p className="text-gray-500 text-center py-8 text-sm">No articles yet. Add your first one above!</p>
             )}
           </div>
         </div>
