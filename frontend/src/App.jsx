@@ -190,16 +190,67 @@ function App() {
     </div>
   )
 
-  // Loading state with animation
+  // Skeleton card for loading state
+  const SkeletonCard = () => (
+    <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-3 sm:p-5 animate-pulse">
+      <div className="flex items-center justify-between mb-3">
+        <div className="h-3 w-20 bg-gray-200 rounded"></div>
+        <div className="h-4 w-4 bg-gray-200 rounded"></div>
+      </div>
+      <div className="h-5 w-full bg-gray-200 rounded mb-2"></div>
+      <div className="h-5 w-3/4 bg-gray-200 rounded mb-4"></div>
+      <div className="h-3 w-full bg-gray-100 rounded mb-2"></div>
+      <div className="h-3 w-2/3 bg-gray-100 rounded mb-4"></div>
+      <div className="flex gap-1.5 mb-4">
+        <div className="h-5 w-14 bg-gray-100 rounded-full"></div>
+        <div className="h-5 w-16 bg-gray-100 rounded-full"></div>
+      </div>
+      <div className="flex gap-2 pt-3 border-t border-gray-100">
+        <div className="h-8 w-8 bg-gray-200 rounded-lg"></div>
+        <div className="h-8 flex-1 bg-gray-200 rounded-lg"></div>
+      </div>
+    </div>
+  )
+
+  // Loading state with skeleton
   if (loading) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50">
-        <div className="relative">
-          <div className="w-16 h-16 bg-orange-100 rounded-2xl flex items-center justify-center animate-bounce">
-            <span className="text-3xl">🐰</span>
+      <div className="min-h-screen bg-gray-50">
+        {/* Header skeleton */}
+        <header className="bg-white border-b border-gray-200">
+          <div className="max-w-6xl mx-auto px-3 sm:px-4 py-3 sm:py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 bg-orange-100 rounded-xl flex items-center justify-center animate-bounce">
+                  <span className="text-xl sm:text-2xl">🐰</span>
+                </div>
+                <div className="h-6 w-24 bg-gray-200 rounded hidden sm:block"></div>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="h-8 w-20 bg-gray-100 rounded-lg"></div>
+                <div className="h-8 w-8 bg-gray-100 rounded-lg"></div>
+              </div>
+            </div>
+          </div>
+        </header>
+        
+        {/* Tabs skeleton */}
+        <div className="bg-white border-b border-gray-100">
+          <div className="max-w-6xl mx-auto px-3 sm:px-4 py-2 sm:py-3">
+            <div className="flex justify-center">
+              <div className="h-10 w-48 bg-gray-100 rounded-full"></div>
+            </div>
           </div>
         </div>
-        <p className="mt-4 text-gray-500 animate-pulse">Loading your reading list...</p>
+
+        {/* Content skeleton */}
+        <main className="max-w-6xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
+          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+            {[1, 2, 3, 4].map((i) => (
+              <SkeletonCard key={i} />
+            ))}
+          </div>
+        </main>
       </div>
     )
   }
@@ -367,19 +418,29 @@ function App() {
         onTouchEnd={handleTouchEnd}
       >
         {activeTab === 'saved' && savedArticles.length === 0 ? (
-          <div className="text-center py-12 sm:py-16">
-            <div className="w-20 h-20 bg-gray-100 rounded-2xl flex items-center justify-center mx-auto mb-4">
-              <span className="text-4xl">📚</span>
+          <div className="text-center py-12 sm:py-16 px-4">
+            <div className="relative inline-block mb-6">
+              <div className="w-24 h-24 bg-gradient-to-br from-orange-100 to-orange-50 rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-orange-500/10">
+                <span className="text-5xl">📚</span>
+              </div>
+              <div className="absolute -bottom-1 -right-1 w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center border-2 border-white">
+                <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                </svg>
+              </div>
             </div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-2">No saved articles yet</h3>
-            <p className="text-gray-500 mb-6 text-sm max-w-xs mx-auto">
-              Tap the bookmark icon on articles you want to read later
+            <h3 className="text-xl font-bold text-gray-900 mb-2">Your reading list is empty</h3>
+            <p className="text-gray-500 mb-2 text-sm max-w-xs mx-auto">
+              Save articles you want to read later by tapping the bookmark icon
+            </p>
+            <p className="text-xs text-gray-400 mb-6">
+              Or swipe right on articles in Single view
             </p>
             <button
               onClick={() => setActiveTab('discover')}
-              className="px-6 py-3 bg-orange-500 text-white font-medium rounded-xl hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
+              className="px-6 py-3 bg-orange-500 text-white font-medium rounded-xl hover:bg-orange-600 transition-all shadow-lg shadow-orange-500/20 active:scale-95"
             >
-              Discover Articles
+              Start Discovering
             </button>
           </div>
         ) : viewMode === 'single' ? (

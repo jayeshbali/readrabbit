@@ -129,8 +129,19 @@ body {
 /* Safe area insets for notched devices */
 @supports (padding: env(safe-area-inset-bottom)) {
   .safe-bottom {
-    padding-bottom: env(safe-area-inset-bottom);
+    padding-bottom: calc(0.75rem + env(safe-area-inset-bottom));
   }
+}
+
+/* Active state for buttons */
+button:active, a:active {
+  transform: scale(0.98);
+}
+
+/* Swipe card styles */
+.swipe-card {
+  touch-action: pan-y;
+  user-select: none;
 }
 
 /* Focus styles */
