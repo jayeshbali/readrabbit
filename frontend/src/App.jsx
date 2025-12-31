@@ -15,7 +15,7 @@ function App() {
   
   // UI State
   const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'saved'
-  const [viewMode, setViewMode] = useState('cards') // 'cards' | 'single' | 'feed'
+  const [viewMode, setViewMode] = useState('feed') // 'feed' | 'single'
   const [singleIndex, setSingleIndex] = useState(0) // For single view navigation
   const [showAdmin, setShowAdmin] = useState(false) // Admin page toggle
   const [showAgent, setShowAgent] = useState(false) // Discovery agent toggle
@@ -63,15 +63,22 @@ function App() {
     }
   }, [loading])
 
-  const fetchArticles = useCallback(async () => {
+  const fetchArticles = useCallback(async (append = false) => {
     try {
       setShuffling(true)
       loadStartTime.current = Date.now()
-      const count = viewMode === 'single' ? 1 : viewMode === 'feed' ? 8 : 4
+      const count = viewMode === 'single' ? 1 : 4
       const response = await fetch(`${API_BASE}/articles/random?count=${count}`)
       if (!response.ok) throw new Error('Failed to fetch articles')
       const data = await response.json()
-      setArticles(data.articles)
+      
+      if (append && viewMode === 'feed') {
+        // Append new articles to existing ones
+        setArticles(prev => [...prev, ...data.articles])
+      } else {
+        setArticles(data.articles)
+      }
+      
       setSingleIndex(0)
       setError(null)
     } catch (err) {
@@ -158,28 +165,29 @@ function App() {
   const handleShowMore = () => {
     if (viewMode === 'single' && singleIndex < articles.length - 1) {
       setSingleIndex((prev) => prev + 1)
+    } else if (viewMode === 'feed') {
+      // Append 4 more articles
+      fetchArticles(true)
     } else {
       fetchArticles()
     }
   }
 
-  // View mode icons - responsive
-  // Desktop: Cards, Single, Feed (Cards default)
-  // Mobile: Cards (4 grid), Single (Cards default)
+  // View mode icons - Feed (default) and Single
   const ViewToggle = () => (
     <div className="flex items-center bg-gray-100 rounded-lg p-1">
-      {/* Cards - default for both */}
+      {/* Feed - default */}
       <button
-        onClick={() => setViewMode('cards')}
+        onClick={() => setViewMode('feed')}
         className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
-          viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
+          viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
         }`}
-        title="Cards"
+        title="Feed"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
         </svg>
-        <span className="hidden sm:inline">Cards</span>
+        <span className="hidden sm:inline">Feed</span>
       </button>
       {/* Single */}
       <button
@@ -193,19 +201,6 @@ function App() {
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 5a1 1 0 011-1h14a1 1 0 011 1v14a1 1 0 01-1 1H5a1 1 0 01-1-1V5z" />
         </svg>
         <span className="hidden sm:inline">Single</span>
-      </button>
-      {/* Feed - desktop only */}
-      <button
-        onClick={() => setViewMode('feed')}
-        className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
-          viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
-        }`}
-        title="Feed"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
-        </svg>
-        <span>Feed</span>
       </button>
     </div>
   )
@@ -274,7 +269,7 @@ function App() {
             </div>
           )}
           
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {[1, 2, 3, 4].map((i) => (
               <SkeletonCard key={i} />
             ))}
@@ -497,33 +492,14 @@ function App() {
               />
             )}
           </div>
-        ) : viewMode === 'feed' ? (
-          /* Feed View */
-          <div className="max-w-2xl mx-auto space-y-3 sm:space-y-4">
-            {displayArticles.map((article, index) => (
-              <div 
-                key={article.id}
-                className="animate-fade-in"
-                style={{ animationDelay: `${index * 50}ms` }}
-              >
-                <ArticleCard
-                  article={article}
-                  onDismiss={handleDismiss}
-                  onSave={handleSave}
-                  isSaved={isArticleSaved(article.id)}
-                  viewMode="cards"
-                />
-              </div>
-            ))}
-          </div>
         ) : (
-          /* Cards View (default) */
-          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-5">
+          /* Feed View - 2x2 grid on mobile, 4 columns on desktop */
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
             {displayArticles.map((article, index) => (
               <div 
                 key={article.id}
                 className="animate-fade-in"
-                style={{ animationDelay: `${index * 50}ms` }}
+                style={{ animationDelay: `${(index % 4) * 50}ms` }}
               >
                 <ArticleCard
                   article={article}
@@ -537,8 +513,8 @@ function App() {
           </div>
         )}
 
-        {/* Show More Button - only on Discover tab, not in single view */}
-        {activeTab === 'discover' && viewMode !== 'single' && (
+        {/* Show More Button - only on Discover tab, Feed view */}
+        {activeTab === 'discover' && viewMode === 'feed' && (
           <div className="flex justify-center mt-8 sm:mt-10">
             <button
               onClick={handleShowMore}
