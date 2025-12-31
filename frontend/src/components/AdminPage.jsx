@@ -236,19 +236,19 @@ function AdminPage({ onBack }) {
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <h2 className="text-base sm:text-lg font-semibold text-gray-900">Add Article</h2>
             
-            {/* Mode Toggle */}
-            <div className="flex items-center bg-gray-100 rounded-lg p-1">
+            {/* Mode Toggle - inline on mobile */}
+            <div className="inline-flex items-center bg-gray-100 rounded-lg p-1 self-start sm:self-auto">
               <button
                 onClick={() => setAddMode('ai')}
-                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   addMode === 'ai' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                🤖 AI Auto-fill
+                🤖 AI
               </button>
               <button
                 onClick={() => setAddMode('manual')}
-                className={`px-2 sm:px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                className={`px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
                   addMode === 'manual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
                 }`}
               >

@@ -15,7 +15,7 @@ function App() {
   
   // UI State
   const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'saved'
-  const [viewMode, setViewMode] = useState('feed') // 'single' | 'cards' | 'feed'
+  const [viewMode, setViewMode] = useState('cards') // 'cards' | 'single' | 'feed'
   const [singleIndex, setSingleIndex] = useState(0) // For single view navigation
   const [showAdmin, setShowAdmin] = useState(false) // Admin page toggle
   const [showAgent, setShowAgent] = useState(false) // Discovery agent toggle
@@ -164,9 +164,24 @@ function App() {
   }
 
   // View mode icons - responsive
-  // Mobile: Single + Feed only (Cards hidden - same as Feed on mobile)
+  // Desktop: Cards, Single, Feed (Cards default)
+  // Mobile: Cards (4 grid), Single (Cards default)
   const ViewToggle = () => (
     <div className="flex items-center bg-gray-100 rounded-lg p-1">
+      {/* Cards - default for both */}
+      <button
+        onClick={() => setViewMode('cards')}
+        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
+          viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
+        }`}
+        title="Cards"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+        </svg>
+        <span className="hidden sm:inline">Cards</span>
+      </button>
+      {/* Single */}
       <button
         onClick={() => setViewMode('single')}
         className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
@@ -179,30 +194,18 @@ function App() {
         </svg>
         <span className="hidden sm:inline">Single</span>
       </button>
-      {/* Cards - desktop only */}
-      <button
-        onClick={() => setViewMode('cards')}
-        className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
-          viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
-        }`}
-        title="Cards"
-      >
-        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-        </svg>
-        <span>Cards</span>
-      </button>
+      {/* Feed - desktop only */}
       <button
         onClick={() => setViewMode('feed')}
-        className={`flex items-center gap-1.5 px-2 sm:px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
-          viewMode === 'feed' || viewMode === 'cards' ? 'bg-white text-gray-900 shadow-sm sm:bg-transparent sm:text-gray-600 sm:shadow-none' : ''
-        } ${viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'}`}
+        className={`hidden sm:flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all duration-200 ${
+          viewMode === 'feed' ? 'bg-white text-gray-900 shadow-sm scale-105' : 'text-gray-600 hover:text-gray-900'
+        }`}
         title="Feed"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" />
         </svg>
-        <span className="hidden sm:inline">Feed</span>
+        <span>Feed</span>
       </button>
     </div>
   )
@@ -443,6 +446,18 @@ function App() {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
+        {/* Value Prop - shown on Discover tab */}
+        {activeTab === 'discover' && articles.length > 0 && (
+          <div className="text-center mb-6 sm:mb-8">
+            <h1 className="text-lg sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-2">
+              Stop scrolling. Start reading.
+            </h1>
+            <p className="text-sm sm:text-base text-gray-500 max-w-md mx-auto">
+              Curated long-form articles worth your time. Save what interests you, skip what doesn't.
+            </p>
+          </div>
+        )}
+
         {activeTab === 'saved' && savedArticles.length === 0 ? (
           <div className="text-center py-12 sm:py-16 px-4">
             <div className="relative inline-block mb-6">

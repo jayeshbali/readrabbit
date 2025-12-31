@@ -5,8 +5,6 @@ const API_BASE = import.meta.env.VITE_API_URL || '/api'
 const INPUT_TYPES = [
   { id: 'for-you', label: '✨ For You', placeholder: '' },
   { id: 'article', label: '📄 Article', placeholder: 'Paste article URL...' },
-  { id: 'podcast', label: '🎙️ Podcast/Video', placeholder: 'Paste YouTube or podcast URL...' },
-  { id: 'tweet', label: '🐦 Tweet', placeholder: 'Paste tweet/thread URL...' },
   { id: 'text', label: '💭 Describe', placeholder: 'Describe what you want to read about...' },
 ]
 
