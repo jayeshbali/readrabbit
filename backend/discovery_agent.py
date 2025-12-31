@@ -340,3 +340,222 @@ async def run_discovery_agent(
         "searches_performed": len(search_queries),
         "results_evaluated": len(unique_results),
     }
+
+
+async def analyze_reading_profile(articles: list[dict]) -> dict:
+    """
+    Analyze a user's article library to build a reading profile.
+    """
+    if not articles:
+        return {
+            "success": False,
+            "error": "No articles to analyze"
+        }
+    
+    # Build a summary of the library
+    library_summary = "\n".join([
+        f"- {a.get('title', 'Untitled')} ({a.get('source', 'Unknown')}) - Topics: {', '.join(a.get('topics', []))}"
+        for a in articles[:30]  # Limit to 30 most recent
+    ])
+    
+    prompt = f"""Analyze this reading library and build a reader profile.
+
+Library ({len(articles)} articles):
+{library_summary}
+
+Based on these articles, identify:
+1. The reader's main interest areas (with approximate percentages)
+2. Favorite sources/authors
+3. Content preferences (length, style, depth)
+4. Suggested search queries to find MORE articles they would love
+
+Respond with ONLY valid JSON:
+{{
+    "interest_breakdown": [
+        {{"topic": "Mental Models", "percentage": 30, "article_count": 8}},
+        {{"topic": "Startups", "percentage": 25, "article_count": 6}}
+    ],
+    "favorite_sources": ["Paul Graham", "Farnam Street", "Sam Altman"],
+    "favorite_authors": ["Paul Graham", "Morgan Housel"],
+    "content_preferences": {{
+        "avg_read_time": 15,
+        "prefers_depth": true,
+        "style_notes": "Prefers essay-style content over listicles"
+    }},
+    "search_queries": [
+        "mental models decision making essays",
+        "startup founder advice long-form",
+        "cognitive biases practical applications"
+    ],
+    "profile_summary": "A reader interested in mental models and decision-making frameworks, particularly as applied to startups and investing. Prefers thoughtful, essay-style content from recognized thinkers."
+}}"""
+
+    response = await call_groq(prompt)
+    
+    # Clean and parse JSON
+    response = response.strip()
+    if response.startswith("```json"):
+        response = response[7:]
+    if response.startswith("```"):
+        response = response[3:]
+    if response.endswith("```"):
+        response = response[:-3]
+    
+    return json.loads(response.strip())
+
+
+async def run_for_you_agent(
+    articles: list[dict],
+    max_results: int = 5,
+    existing_urls: list[str] = None
+) -> dict:
+    """
+    Find personalized recommendations based on the user's entire library.
+    """
+    existing_urls = existing_urls or []
+    
+    if len(articles) < 3:
+        return {
+            "success": False,
+            "error": "Need at least 3 articles in your library to generate personalized recommendations"
+        }
+    
+    # Step 1: Analyze reading profile
+    print(f"[ForYou] Analyzing {len(articles)} articles...")
+    profile = await analyze_reading_profile(articles)
+    print(f"[ForYou] Profile built: {profile.get('profile_summary', '')[:100]}...")
+    
+    # Step 2: Search based on profile
+    all_results = []
+    search_queries = profile.get("search_queries", [])[:4]
+    
+    for query in search_queries:
+        print(f"[ForYou] Searching: {query}")
+        results = await search_web(query, num_results=10)
+        all_results.extend(results)
+    
+    # Remove duplicates and existing URLs
+    seen_urls = set(existing_urls)
+    unique_results = []
+    for r in all_results:
+        if r["url"] not in seen_urls:
+            seen_urls.add(r["url"])
+            unique_results.append(r)
+    
+    print(f"[ForYou] Found {len(unique_results)} unique results")
+    
+    if not unique_results:
+        return {
+            "success": True,
+            "profile": profile,
+            "recommendations": [],
+            "message": "No new articles found"
+        }
+    
+    # Step 3: Evaluate results against profile
+    print(f"[ForYou] Evaluating quality...")
+    themes = {
+        "main_topics": [i["topic"] for i in profile.get("interest_breakdown", [])],
+        "key_concepts": profile.get("favorite_authors", []),
+        "related_fields": profile.get("favorite_sources", []),
+    }
+    evaluated = await evaluate_search_results(unique_results, themes)
+    
+    # Step 4: Extract metadata for top picks
+    print(f"[ForYou] Extracting metadata for {len(evaluated)} articles...")
+    recommendations = []
+    
+    for item in evaluated[:max_results]:
+        try:
+            url = item["url"]
+            content = await fetch_content_preview(url)
+            metadata = await extract_article_metadata(url, content)
+            
+            recommendations.append({
+                "url": url,
+                "title": metadata.get("title", item["title"]),
+                "source": metadata.get("source"),
+                "author": metadata.get("author"),
+                "summary": metadata.get("summary"),
+                "topics": metadata.get("topics", []),
+                "read_time": metadata.get("read_time"),
+                "quality_score": item.get("quality_score", 7),
+                "reason": item.get("reason", "Matches your reading profile"),
+            })
+            print(f"[ForYou] ✓ {metadata.get('title', url)[:50]}...")
+        except Exception as e:
+            print(f"[ForYou] ✗ Failed to process {url}: {e}")
+            continue
+    
+    return {
+        "success": True,
+        "profile": profile,
+        "recommendations": recommendations,
+        "searches_performed": len(search_queries),
+        "results_evaluated": len(unique_results),
+    }
+    
+    # Step 2: Search for similar content
+    all_results = []
+    search_queries = themes.get("suggested_search_queries", [])[:3]
+    
+    for query in search_queries:
+        print(f"[Agent] Searching: {query}")
+        results = await search_web(query, num_results=10)
+        all_results.extend(results)
+    
+    # Remove duplicates and existing URLs
+    seen_urls = set(existing_urls)
+    unique_results = []
+    for r in all_results:
+        if r["url"] not in seen_urls:
+            seen_urls.add(r["url"])
+            unique_results.append(r)
+    
+    print(f"[Agent] Found {len(unique_results)} unique results")
+    
+    if not unique_results:
+        return {
+            "success": True,
+            "themes": themes,
+            "recommendations": [],
+            "message": "No new articles found"
+        }
+    
+    # Step 3: Evaluate and rank results
+    print(f"[Agent] Evaluating quality...")
+    evaluated = await evaluate_search_results(unique_results, themes)
+    
+    # Step 4: Extract metadata for top picks
+    print(f"[Agent] Extracting metadata for {len(evaluated)} articles...")
+    recommendations = []
+    
+    for item in evaluated[:max_results]:
+        try:
+            url = item["url"]
+            content = await fetch_content_preview(url)
+            metadata = await extract_article_metadata(url, content)
+            
+            recommendations.append({
+                "url": url,
+                "title": metadata.get("title", item["title"]),
+                "source": metadata.get("source"),
+                "author": metadata.get("author"),
+                "summary": metadata.get("summary"),
+                "topics": metadata.get("topics", []),
+                "read_time": metadata.get("read_time"),
+                "quality_score": item.get("quality_score", 7),
+                "reason": item.get("reason", "Relevant to your interests"),
+            })
+            print(f"[Agent] ✓ {metadata.get('title', url)[:50]}...")
+        except Exception as e:
+            print(f"[Agent] ✗ Failed to process {url}: {e}")
+            continue
+    
+    return {
+        "success": True,
+        "themes": themes,
+        "recommendations": recommendations,
+        "searches_performed": len(search_queries),
+        "results_evaluated": len(unique_results),
+    }

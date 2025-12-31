@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Integer, Text, DateTime, ForeignKey, Enum, ARRAY
+from sqlalchemy import create_engine, Column, String, Integer, Text, DateTime, ForeignKey, Enum, ARRAY, Float
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -55,6 +55,9 @@ class Article(Base):
     status = Column(String(50), default=ArticleStatus.UNREAD.value)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Embedding for recommendations (1536 dimensions for OpenAI text-embedding-3-small)
+    embedding = Column(ARRAY(Float))
 
     # Relationship to saved articles
     saved_by = relationship("SavedArticle", back_populates="article")
@@ -72,6 +75,7 @@ class Article(Base):
             "source_type": self.source_type,
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "has_embedding": self.embedding is not None,
         }
 
 

@@ -409,8 +409,8 @@ async def extract_metadata(input: URLInput):
 
 @app.post("/api/admin/add-article-smart")
 async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
-    """Fetch URL, extract metadata with AI, and add to database."""
-    from ai_service import extract_article_metadata, fetch_url_content
+    """Fetch URL, extract metadata with AI, generate embedding, and add to database."""
+    from ai_service import extract_article_metadata, fetch_url_content, generate_article_embedding
     
     # Check if URL already exists
     existing = db.query(Article).filter(Article.url == input.url).first()
@@ -421,6 +421,9 @@ async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
         # Fetch and extract
         html_content = await fetch_url_content(input.url)
         metadata = await extract_article_metadata(input.url, html_content)
+        
+        # Generate embedding for recommendations
+        embedding = await generate_article_embedding(metadata)
         
         # Create article
         db_article = Article(
@@ -434,6 +437,7 @@ async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
             read_time=metadata.get("read_time"),
             source_type=SourceType.MANUAL.value,
             status=ArticleStatus.UNREAD.value,
+            embedding=embedding,
         )
         db.add(db_article)
         db.commit()
@@ -441,10 +445,309 @@ async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
         
         return {
             "success": True,
-            "article": db_article.to_dict()
+            "article": db_article.to_dict(),
+            "embedding_generated": embedding is not None
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ============== Embedding Management Endpoints ==============
+
+@app.get("/api/admin/embedding-status")
+def get_embedding_status(db: Session = Depends(get_db)):
+    """Check how many articles have embeddings."""
+    total = db.query(Article).count()
+    with_embedding = db.query(Article).filter(Article.embedding != None).count()
+    without_embedding = total - with_embedding
+    
+    return {
+        "total_articles": total,
+        "with_embedding": with_embedding,
+        "without_embedding": without_embedding,
+        "percentage_complete": round((with_embedding / total * 100) if total > 0 else 0, 1),
+        "providers": {
+            "voyage": "active (free tier)" if os.getenv("VOYAGE_API_KEY") else "not configured",
+            "huggingface": "active (free fallback)",
+            "openai": "active" if os.getenv("OPENAI_API_KEY") else "not configured"
+        },
+        "active_provider": (
+            "voyage (recommended)" if os.getenv("VOYAGE_API_KEY") 
+            else "huggingface (free fallback)"
+        ),
+        "note": "Voyage AI is recommended: best quality, 200M free tokens/month"
+    }
+
+
+@app.post("/api/admin/test-embedding")
+async def test_embedding():
+    """Test embedding generation with a sample text."""
+    from ai_service import (
+        generate_embedding, 
+        generate_embedding_voyage,
+        generate_embedding_huggingface, 
+        generate_embedding_openai
+    )
+    
+    test_text = "Artificial intelligence is transforming how we work and live."
+    
+    results = {
+        "test_text": test_text,
+        "providers": {}
+    }
+    
+    # Test Voyage (recommended)
+    if os.getenv("VOYAGE_API_KEY"):
+        try:
+            voyage_embedding = await generate_embedding_voyage(test_text)
+            if voyage_embedding:
+                results["providers"]["voyage"] = {
+                    "status": "success",
+                    "dimensions": len(voyage_embedding),
+                    "sample": voyage_embedding[:5],
+                    "note": "Recommended - best quality for retrieval"
+                }
+            else:
+                results["providers"]["voyage"] = {"status": "failed", "error": "No embedding returned"}
+        except Exception as e:
+            results["providers"]["voyage"] = {"status": "error", "error": str(e)}
+    else:
+        results["providers"]["voyage"] = {"status": "not configured", "note": "Get free key at voyageai.com"}
+    
+    # Test Hugging Face (free fallback)
+    try:
+        hf_embedding = await generate_embedding_huggingface(test_text)
+        if hf_embedding:
+            results["providers"]["huggingface"] = {
+                "status": "success",
+                "dimensions": len(hf_embedding),
+                "sample": hf_embedding[:5]
+            }
+        else:
+            results["providers"]["huggingface"] = {"status": "failed", "error": "No embedding returned"}
+    except Exception as e:
+        results["providers"]["huggingface"] = {"status": "error", "error": str(e)}
+    
+    # Test OpenAI if configured
+    if os.getenv("OPENAI_API_KEY"):
+        try:
+            openai_embedding = await generate_embedding_openai(test_text)
+            if openai_embedding:
+                results["providers"]["openai"] = {
+                    "status": "success",
+                    "dimensions": len(openai_embedding),
+                    "sample": openai_embedding[:5]
+                }
+            else:
+                results["providers"]["openai"] = {"status": "failed", "error": "No embedding returned"}
+        except Exception as e:
+            results["providers"]["openai"] = {"status": "error", "error": str(e)}
+    else:
+        results["providers"]["openai"] = {"status": "not configured"}
+    
+    return results
+
+
+@app.post("/api/admin/enhance-summaries")
+async def enhance_summaries(
+    limit: int = 5,
+    db: Session = Depends(get_db)
+):
+    """
+    Enhance short summaries to be more detailed for better embeddings.
+    
+    This finds articles with short summaries (<100 chars) and enhances them
+    using AI to create richer, more detailed summaries.
+    """
+    from ai_service import enhance_summary
+    
+    # Find articles with short summaries
+    articles = db.query(Article).filter(
+        func.length(Article.summary) < 100
+    ).limit(limit).all()
+    
+    if not articles:
+        return {
+            "message": "No articles need summary enhancement",
+            "enhanced_count": 0
+        }
+    
+    enhanced = []
+    failed = []
+    
+    for article in articles:
+        try:
+            new_summary = await enhance_summary(
+                title=article.title,
+                current_summary=article.summary or "",
+                url=article.url
+            )
+            
+            if new_summary and len(new_summary) > len(article.summary or ""):
+                old_summary = article.summary
+                article.summary = new_summary
+                db.commit()
+                enhanced.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "old_summary": old_summary,
+                    "new_summary": new_summary,
+                    "old_length": len(old_summary or ""),
+                    "new_length": len(new_summary)
+                })
+            else:
+                failed.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "reason": "Enhancement not better than original"
+                })
+        except Exception as e:
+            failed.append({
+                "id": article.id,
+                "title": article.title,
+                "reason": str(e)
+            })
+    
+    return {
+        "enhanced_count": len(enhanced),
+        "failed_count": len(failed),
+        "enhanced": enhanced,
+        "failed": failed
+    }
+
+
+@app.post("/api/admin/generate-embeddings")
+async def generate_embeddings(
+    limit: int = 10,
+    db: Session = Depends(get_db)
+):
+    """
+    Generate embeddings for articles that don't have them.
+    
+    Process articles in batches to avoid rate limits.
+    """
+    from ai_service import generate_article_embedding
+    
+    # Find articles without embeddings
+    articles = db.query(Article).filter(
+        Article.embedding == None
+    ).limit(limit).all()
+    
+    if not articles:
+        return {
+            "message": "All articles already have embeddings",
+            "generated_count": 0
+        }
+    
+    generated = []
+    failed = []
+    
+    for article in articles:
+        try:
+            embedding = await generate_article_embedding({
+                "title": article.title,
+                "summary": article.summary,
+                "topics": article.topics,
+                "source": article.source,
+                "author": article.author
+            })
+            
+            if embedding:
+                article.embedding = embedding
+                db.commit()
+                generated.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "embedding_dims": len(embedding)
+                })
+            else:
+                failed.append({
+                    "id": article.id,
+                    "title": article.title,
+                    "reason": "Embedding generation returned None"
+                })
+        except Exception as e:
+            failed.append({
+                "id": article.id,
+                "title": article.title,
+                "reason": str(e)
+            })
+    
+    return {
+        "generated_count": len(generated),
+        "failed_count": len(failed),
+        "generated": generated,
+        "failed": failed
+    }
+
+
+@app.post("/api/admin/backfill-all")
+async def backfill_all(db: Session = Depends(get_db)):
+    """
+    Backfill all articles: enhance summaries then generate embeddings.
+    
+    This is a convenience endpoint that:
+    1. Enhances all short summaries
+    2. Generates embeddings for all articles
+    
+    Use with caution - can take a while for large libraries!
+    """
+    from ai_service import enhance_summary, generate_article_embedding
+    import asyncio
+    
+    results = {
+        "summaries_enhanced": 0,
+        "embeddings_generated": 0,
+        "errors": []
+    }
+    
+    # Step 1: Enhance short summaries
+    articles_needing_summary = db.query(Article).filter(
+        func.length(Article.summary) < 100
+    ).all()
+    
+    for article in articles_needing_summary:
+        try:
+            new_summary = await enhance_summary(
+                title=article.title,
+                current_summary=article.summary or "",
+                url=article.url
+            )
+            if new_summary and len(new_summary) > len(article.summary or ""):
+                article.summary = new_summary
+                results["summaries_enhanced"] += 1
+                # Small delay to avoid rate limits
+                await asyncio.sleep(1)
+        except Exception as e:
+            results["errors"].append(f"Summary error for {article.title}: {str(e)}")
+    
+    db.commit()
+    
+    # Step 2: Generate embeddings for all articles without them
+    articles_needing_embedding = db.query(Article).filter(
+        Article.embedding == None
+    ).all()
+    
+    for article in articles_needing_embedding:
+        try:
+            embedding = await generate_article_embedding({
+                "title": article.title,
+                "summary": article.summary,
+                "topics": article.topics,
+                "source": article.source,
+                "author": article.author
+            })
+            if embedding:
+                article.embedding = embedding
+                results["embeddings_generated"] += 1
+                # Small delay to avoid rate limits
+                await asyncio.sleep(0.5)
+        except Exception as e:
+            results["errors"].append(f"Embedding error for {article.title}: {str(e)}")
+    
+    db.commit()
+    
+    return results
 
 
 # ============== Discovery Agent Endpoints ==============
