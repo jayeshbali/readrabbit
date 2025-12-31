@@ -269,7 +269,7 @@ function App() {
             </div>
           )}
           
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          <div className="max-w-2xl mx-auto space-y-4">
             {[1, 2, 3, 4].map((i) => (
               <SkeletonCard key={i} />
             ))}
@@ -493,8 +493,8 @@ function App() {
             )}
           </div>
         ) : (
-          /* Feed View - 2x2 grid on mobile, 4 columns on desktop */
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
+          /* Feed View - single column vertical stack */
+          <div className="max-w-2xl mx-auto space-y-4">
             {displayArticles.map((article, index) => (
               <div 
                 key={article.id}
