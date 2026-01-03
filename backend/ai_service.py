@@ -190,32 +190,48 @@ async def generate_embedding_voyage(text: str) -> Optional[List[float]]:
     if not VOYAGE_API_KEY:
         return None
     
+    import asyncio
+    
     async with httpx.AsyncClient(timeout=30.0) as client:
-        try:
-            response = await client.post(
-                VOYAGE_EMBEDDING_URL,
-                headers={
-                    "Authorization": f"Bearer {VOYAGE_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": "voyage-2",  # Best balance of quality and speed
-                    "input": text,
-                    "input_type": "document",  # Optimized for storing documents
-                },
-            )
-            
-            if response.status_code != 200:
-                print(f"Voyage API error: {response.status_code} - {response.text}")
+        # Retry logic for rate limits
+        for attempt in range(3):
+            try:
+                response = await client.post(
+                    VOYAGE_EMBEDDING_URL,
+                    headers={
+                        "Authorization": f"Bearer {VOYAGE_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "model": "voyage-2",  # Best balance of quality and speed
+                        "input": text,
+                        "input_type": "document",  # Optimized for storing documents
+                    },
+                )
+                
+                if response.status_code == 429:
+                    # Rate limited - wait and retry
+                    wait_time = (attempt + 1) * 5
+                    print(f"Voyage rate limited, waiting {wait_time}s...")
+                    await asyncio.sleep(wait_time)
+                    continue
+                
+                if response.status_code != 200:
+                    print(f"Voyage API error: {response.status_code} - {response.text}")
+                    return None
+                
+                result = response.json()
+                embedding = result["data"][0]["embedding"]
+                return embedding
+                
+            except Exception as e:
+                print(f"Error generating Voyage embedding (attempt {attempt + 1}): {e}")
+                if attempt < 2:
+                    await asyncio.sleep(2)
+                    continue
                 return None
-            
-            result = response.json()
-            embedding = result["data"][0]["embedding"]
-            return embedding
-            
-        except Exception as e:
-            print(f"Error generating Voyage embedding: {e}")
-            return None
+    
+    return None
 
 
 async def generate_embedding_huggingface(text: str) -> Optional[List[float]]:

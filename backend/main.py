@@ -1,7 +1,7 @@
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
-from sqlalchemy import func
+from sqlalchemy import func, text
 from pydantic import BaseModel
 from typing import Optional
 import random
@@ -21,10 +21,33 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize database tables
     if DATABASE_URL:
         init_db()
+        # Run migrations for new columns
+        run_migrations()
         # Seed with initial articles if empty
         seed_articles_if_empty()
     yield
     # Shutdown: nothing to do
+
+
+def run_migrations():
+    """Run database migrations to add new columns."""
+    if not SessionLocal:
+        return
+    
+    db = SessionLocal()
+    try:
+        # Add embedding column if it doesn't exist
+        db.execute(text("""
+            ALTER TABLE articles 
+            ADD COLUMN IF NOT EXISTS embedding FLOAT[]
+        """))
+        db.commit()
+        print("Database migration completed - embedding column ready")
+    except Exception as e:
+        db.rollback()
+        print(f"Migration note: {e}")
+    finally:
+        db.close()
 
 
 app = FastAPI(title="ReadRabbit API", lifespan=lifespan)
@@ -452,6 +475,370 @@ async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== Admin Curation Endpoints ==============
+
+class CandidateRequest(BaseModel):
+    mode: str = "auto"  # auto, topic, similar, source
+    topic: Optional[str] = None
+    similar_to: Optional[str] = None  # article_id
+    source: Optional[str] = None  # author or publication name
+    count: int = 10
+    match_library_style: bool = True  # Score against existing library
+
+
+@app.post("/api/admin/candidates")
+async def get_candidates(
+    request: CandidateRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Find article candidates for admin to review and curate.
+    
+    Modes:
+    - auto: AI discovers based on your library clusters
+    - topic: Search for a specific topic
+    - similar: Find articles similar to one in your library
+    - source: Find more from an author/publication
+    
+    All candidates are scored against your library for relevance.
+    """
+    from discovery_agent import search_web
+    from recommendation_engine import (
+        build_user_profile,
+        build_interest_clusters,
+        cosine_similarity,
+        is_research_paper,
+        extract_user_interests
+    )
+    from ai_service import generate_article_embedding, extract_article_metadata, fetch_url_content
+    
+    # Get existing library for context
+    library_articles = db.query(Article).filter(
+        Article.embedding != None
+    ).all()
+    
+    library_dicts = [
+        {
+            "id": a.id,
+            "title": a.title,
+            "url": a.url,
+            "source": a.source,
+            "author": a.author,
+            "topics": a.topics or [],
+            "embedding": a.embedding,
+            "created_at": a.created_at
+        }
+        for a in library_articles
+    ]
+    
+    existing_urls = {a.url for a in library_articles}
+    existing_titles = {a.title.lower() for a in library_articles}
+    
+    # Build search queries based on mode
+    search_queries = []
+    context_message = ""
+    
+    if request.mode == "auto":
+        # Auto-discover based on library clusters
+        clusters = build_interest_clusters(library_dicts)
+        top_clusters = clusters[:3]  # Top 3 interest areas
+        
+        for cluster in top_clusters:
+            search_queries.append(f"{cluster.name} articles essays blog")
+        
+        # Also try extracting common sources
+        sources = {}
+        for a in library_dicts:
+            if a.get("source"):
+                sources[a["source"]] = sources.get(a["source"], 0) + 1
+        
+        top_sources = sorted(sources.items(), key=lambda x: x[1], reverse=True)[:2]
+        for source, _ in top_sources:
+            search_queries.append(f"{source} articles")
+        
+        context_message = f"Auto-discovering based on clusters: {', '.join(c.name for c in top_clusters)}"
+    
+    elif request.mode == "topic":
+        if not request.topic:
+            raise HTTPException(status_code=400, detail="Topic required for topic mode")
+        
+        search_queries = [
+            f"{request.topic} articles essays",
+            f"{request.topic} blog posts",
+            f"best {request.topic} reads"
+        ]
+        context_message = f"Searching for topic: {request.topic}"
+    
+    elif request.mode == "similar":
+        if not request.similar_to:
+            raise HTTPException(status_code=400, detail="Article ID required for similar mode")
+        
+        source_article = db.query(Article).filter(Article.id == request.similar_to).first()
+        if not source_article:
+            raise HTTPException(status_code=404, detail="Article not found")
+        
+        # Search based on article's topics and title keywords
+        topics = source_article.topics or []
+        topic_query = " ".join(topics[:2]) if topics else ""
+        
+        search_queries = [
+            f"{topic_query} articles essays",
+            f"similar to {source_article.title[:50]}",
+        ]
+        
+        if source_article.author:
+            search_queries.append(f"{source_article.author} other essays")
+        
+        context_message = f"Finding articles similar to: {source_article.title}"
+    
+    elif request.mode == "source":
+        if not request.source:
+            raise HTTPException(status_code=400, detail="Source required for source mode")
+        
+        search_queries = [
+            f"{request.source} articles",
+            f"{request.source} essays blog",
+            f"{request.source} best writing"
+        ]
+        context_message = f"Finding more from: {request.source}"
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown mode: {request.mode}")
+    
+    # Execute searches
+    raw_results = []
+    for query in search_queries[:4]:  # Limit to 4 queries
+        try:
+            results = await search_web(query, num_results=10)
+            raw_results.extend(results)
+        except Exception as e:
+            print(f"Search error for '{query}': {e}")
+    
+    # Deduplicate by URL
+    seen_urls = set()
+    unique_results = []
+    for r in raw_results:
+        url = r.get("url", "")
+        if url not in seen_urls and url not in existing_urls:
+            seen_urls.add(url)
+            unique_results.append(r)
+    
+    # Filter and score candidates
+    candidates = []
+    
+    # Build user profile for scoring
+    user_profile = build_user_profile(library_dicts, [])
+    
+    for result in unique_results[:request.count * 2]:  # Get more than needed, filter later
+        url = result.get("url", "")
+        title = result.get("title", "")
+        
+        # Skip if title already exists (approximate duplicate)
+        if title.lower() in existing_titles:
+            continue
+        
+        # Skip research papers
+        if is_research_paper(url, "", title):
+            continue
+        
+        # Skip common non-article pages
+        skip_patterns = [
+            "/tag/", "/category/", "/author/", "/search",
+            "linkedin.com", "twitter.com", "youtube.com",
+            "amazon.com", "goodreads.com"
+        ]
+        if any(pattern in url.lower() for pattern in skip_patterns):
+            continue
+        
+        candidate = {
+            "url": url,
+            "title": title,
+            "snippet": result.get("snippet", ""),
+            "source": extract_source_name(url),
+        }
+        
+        # Score against library if requested
+        if request.match_library_style and user_profile.clusters:
+            try:
+                # Generate embedding for candidate
+                embedding = await generate_article_embedding({
+                    "title": title,
+                    "summary": result.get("snippet", ""),
+                    "topics": [],
+                    "source": candidate["source"]
+                })
+                
+                if embedding:
+                    # Score against each cluster, take best match
+                    best_score = 0
+                    best_cluster = None
+                    
+                    for cluster in user_profile.clusters:
+                        if cluster.embedding:
+                            sim = cosine_similarity(cluster.embedding, embedding)
+                            if sim > best_score:
+                                best_score = sim
+                                best_cluster = cluster.name
+                    
+                    candidate["match_score"] = round(best_score * 100)
+                    candidate["matched_cluster"] = best_cluster
+                    candidate["embedding"] = embedding  # Keep for later use
+                else:
+                    candidate["match_score"] = 0
+                    candidate["matched_cluster"] = None
+            except Exception as e:
+                print(f"Embedding error for {title}: {e}")
+                candidate["match_score"] = 0
+                candidate["matched_cluster"] = None
+        else:
+            candidate["match_score"] = None
+            candidate["matched_cluster"] = None
+        
+        candidates.append(candidate)
+        
+        # Stop if we have enough
+        if len(candidates) >= request.count:
+            break
+    
+    # Sort by match score if available
+    if request.match_library_style:
+        candidates.sort(key=lambda x: x.get("match_score", 0) or 0, reverse=True)
+    
+    # Remove embeddings from response (too large)
+    for c in candidates:
+        c.pop("embedding", None)
+    
+    return {
+        "candidates": candidates[:request.count],
+        "context": context_message,
+        "mode": request.mode,
+        "queries_used": search_queries[:4],
+        "library_stats": {
+            "total_articles": len(library_dicts),
+            "clusters": [
+                {"name": c.name, "articles": c.article_count}
+                for c in (user_profile.clusters[:5] if user_profile.clusters else [])
+            ]
+        }
+    }
+
+
+@app.post("/api/admin/candidates/approve")
+async def approve_candidate(
+    input: URLInput,
+    db: Session = Depends(get_db)
+):
+    """
+    Approve a candidate and add it to the library.
+    Same as add-article-smart but semantically for curation flow.
+    """
+    from ai_service import extract_article_metadata, fetch_url_content, generate_article_embedding
+    
+    # Check if already exists
+    existing = db.query(Article).filter(Article.url == input.url).first()
+    if existing:
+        return {
+            "success": False,
+            "message": "Article already in library",
+            "article": existing.to_dict()
+        }
+    
+    try:
+        # Fetch and extract
+        html_content = await fetch_url_content(input.url)
+        metadata = await extract_article_metadata(input.url, html_content)
+        
+        # Generate embedding
+        embedding = await generate_article_embedding(metadata)
+        
+        # Create article
+        db_article = Article(
+            id=str(uuid.uuid4()),
+            title=metadata.get("title", "Untitled"),
+            url=input.url,
+            source=metadata.get("source"),
+            author=metadata.get("author"),
+            summary=metadata.get("summary"),
+            topics=metadata.get("topics", []),
+            read_time=metadata.get("read_time"),
+            source_type=SourceType.AI_SUGGESTED.value,
+            status=ArticleStatus.UNREAD.value,
+            embedding=embedding,
+        )
+        db.add(db_article)
+        db.commit()
+        db.refresh(db_article)
+        
+        return {
+            "success": True,
+            "message": "Article added to library",
+            "article": db_article.to_dict()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def extract_source_name(url: str) -> str:
+    """Extract readable source name from URL."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        domain = parsed.netloc.replace("www.", "")
+        
+        # Known source mappings
+        source_map = {
+            "paulgraham.com": "Paul Graham",
+            "fs.blog": "Farnam Street",
+            "gatesnotes.com": "Gates Notes",
+            "waitbutwhy.com": "Wait But Why",
+            "stratechery.com": "Stratechery",
+            "seths.blog": "Seth Godin",
+            "perell.com": "David Perell",
+            "jamesclear.com": "James Clear",
+            "sahilbloom.com": "Sahil Bloom",
+            "collabfund.com": "Collaborative Fund",
+            "avc.com": "AVC (Fred Wilson)",
+            "ben-evans.com": "Ben Evans",
+            "eugenewei.com": "Eugene Wei",
+            "ribbonfarm.com": "Ribbonfarm",
+            "lesswrong.com": "LessWrong",
+            "overcomingbias.com": "Overcoming Bias",
+            "marginalrevolution.com": "Marginal Revolution",
+        }
+        
+        return source_map.get(domain, domain)
+    except:
+        return ""
+
+
+# ============== Database Migration Endpoints ==============
+
+@app.post("/api/admin/migrate-db")
+def migrate_database(db: Session = Depends(get_db)):
+    """
+    Run database migrations to add new columns.
+    Safe to run multiple times - uses IF NOT EXISTS.
+    """
+    try:
+        # Add embedding column if it doesn't exist
+        db.execute(text("""
+            ALTER TABLE articles 
+            ADD COLUMN IF NOT EXISTS embedding FLOAT[]
+        """))
+        db.commit()
+        
+        return {
+            "success": True,
+            "message": "Migration completed - embedding column added"
+        }
+    except Exception as e:
+        db.rollback()
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+
 # ============== Embedding Management Endpoints ==============
 
 @app.get("/api/admin/embedding-status")
@@ -627,6 +1014,7 @@ async def generate_embeddings(
     Process articles in batches to avoid rate limits.
     """
     from ai_service import generate_article_embedding
+    import asyncio
     
     # Find articles without embeddings
     articles = db.query(Article).filter(
@@ -666,6 +1054,10 @@ async def generate_embeddings(
                     "title": article.title,
                     "reason": "Embedding generation returned None"
                 })
+            
+            # Add delay between requests to avoid rate limiting
+            await asyncio.sleep(1)
+            
         except Exception as e:
             failed.append({
                 "id": article.id,
@@ -748,6 +1140,326 @@ async def backfill_all(db: Session = Depends(get_db)):
     db.commit()
     
     return results
+
+
+# ============== Recommendation Endpoints ==============
+
+@app.get("/api/recommendations")
+async def get_recommendations_endpoint(
+    count: int = 4,
+    explain: bool = False,
+    db: Session = Depends(get_db)
+):
+    """
+    Get personalized article recommendations.
+    
+    Uses interest clusters for better personalization:
+    - Multiple interest areas (not single average)
+    - Recency weighting (recent saves matter more)
+    - Topic diversity (max 2 per topic)
+    - 50% on-topic, 50% serendipity
+    
+    Add ?explain=true to see why recommendations were made.
+    """
+    from recommendation_engine import (
+        build_user_profile, 
+        get_recommendations,
+        extract_user_interests,
+        explain_recommendations
+    )
+    
+    # Get all saved articles (for now, using all with status != Dismissed as "saved")
+    saved_articles = db.query(Article).filter(
+        Article.status != ArticleStatus.DISMISSED.value
+    ).all()
+    
+    # Get dismissed articles
+    dismissed_articles = db.query(Article).filter(
+        Article.status == ArticleStatus.DISMISSED.value
+    ).all()
+    
+    # Convert to dicts with created_at for recency weighting
+    saved_dicts = [
+        {
+            "id": a.id,
+            "title": a.title,
+            "url": a.url,
+            "source": a.source,
+            "author": a.author,
+            "summary": a.summary,
+            "topics": a.topics or [],
+            "embedding": a.embedding,
+            "created_at": a.created_at  # For recency weighting
+        }
+        for a in saved_articles
+    ]
+    
+    dismissed_dicts = [
+        {
+            "id": a.id,
+            "embedding": a.embedding
+        }
+        for a in dismissed_articles
+    ]
+    
+    # Build user profile with clusters
+    user_profile = build_user_profile(saved_dicts, dismissed_dicts)
+    
+    # Get all articles as candidates
+    all_articles = db.query(Article).filter(
+        Article.embedding != None
+    ).all()
+    
+    candidate_dicts = [
+        {
+            "id": a.id,
+            "title": a.title,
+            "url": a.url,
+            "source": a.source,
+            "author": a.author,
+            "summary": a.summary,
+            "topics": a.topics or [],
+            "read_time": a.read_time,
+            "embedding": a.embedding
+        }
+        for a in all_articles
+    ]
+    
+    # Get recommendations
+    recommendations = get_recommendations(
+        user_profile=user_profile,
+        candidate_articles=candidate_dicts,
+        count=count,
+        serendipity_ratio=0.5,  # 2 out of 4
+        max_per_topic=2  # Diversity enforcement
+    )
+    
+    # Remove embeddings from response
+    for rec in recommendations:
+        rec.pop("embedding", None)
+    
+    # Build response
+    response = {
+        "recommendations": recommendations,
+        "user_interests": extract_user_interests(user_profile),
+        "profile_stats": {
+            "saved_count": len(saved_dicts),
+            "dismissed_count": len(dismissed_dicts),
+            "clusters": [
+                {
+                    "name": c.name,
+                    "articles": c.article_count,
+                    "recency": round(c.recency_weight, 2)
+                }
+                for c in user_profile.clusters[:5]
+            ],
+            "top_topics": list(user_profile.topic_counts.items())[:5] if user_profile.topic_counts else []
+        }
+    }
+    
+    # Add explanation if requested
+    if explain:
+        response["explanation"] = explain_recommendations(recommendations, user_profile)
+    
+    return response
+
+
+@app.get("/api/articles/{article_id}/similar")
+async def get_similar_articles_endpoint(
+    article_id: str,
+    count: int = 4,
+    db: Session = Depends(get_db)
+):
+    """
+    Get articles similar to a specific article.
+    
+    Useful for "More like this" functionality.
+    """
+    from recommendation_engine import get_similar_articles
+    
+    # Get the source article
+    article = db.query(Article).filter(Article.id == article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    
+    if not article.embedding:
+        raise HTTPException(status_code=400, detail="Article has no embedding")
+    
+    article_dict = {
+        "id": article.id,
+        "title": article.title,
+        "embedding": article.embedding
+    }
+    
+    # Get all other articles as candidates
+    all_articles = db.query(Article).filter(
+        Article.embedding != None,
+        Article.id != article_id
+    ).all()
+    
+    candidate_dicts = [
+        {
+            "id": a.id,
+            "title": a.title,
+            "url": a.url,
+            "source": a.source,
+            "author": a.author,
+            "summary": a.summary,
+            "topics": a.topics or [],
+            "read_time": a.read_time,
+            "embedding": a.embedding
+        }
+        for a in all_articles
+    ]
+    
+    # Get similar articles
+    similar = get_similar_articles(
+        article=article_dict,
+        candidate_articles=candidate_dicts,
+        count=count
+    )
+    
+    # Remove embeddings from response
+    for s in similar:
+        s.pop("embedding", None)
+    
+    return {
+        "source_article": {
+            "id": article.id,
+            "title": article.title
+        },
+        "similar_articles": similar
+    }
+
+
+@app.post("/api/recommendations/for-you")
+async def get_for_you_recommendations(
+    count: int = 4,
+    db: Session = Depends(get_db)
+):
+    """
+    Get "For You" recommendations - the main discovery feature.
+    
+    This endpoint:
+    1. Builds user profile from reading history
+    2. Searches for new articles matching interests (via web search)
+    3. Filters out research papers
+    4. Returns mix of on-topic + serendipity
+    """
+    from recommendation_engine import (
+        build_user_profile,
+        extract_user_interests,
+        is_research_paper,
+        get_recommendations
+    )
+    from discovery_agent import search_articles
+    from ai_service import generate_article_embedding
+    
+    # Build user profile
+    saved_articles = db.query(Article).filter(
+        Article.status != ArticleStatus.DISMISSED.value
+    ).all()
+    
+    dismissed_articles = db.query(Article).filter(
+        Article.status == ArticleStatus.DISMISSED.value
+    ).all()
+    
+    saved_dicts = [
+        {
+            "id": a.id,
+            "topics": a.topics or [],
+            "embedding": a.embedding
+        }
+        for a in saved_articles
+    ]
+    
+    dismissed_dicts = [
+        {"id": a.id, "embedding": a.embedding}
+        for a in dismissed_articles
+    ]
+    
+    user_profile = build_user_profile(saved_dicts, dismissed_dicts)
+    interests = extract_user_interests(user_profile)
+    
+    if not interests:
+        # No profile yet - return from existing library
+        existing = db.query(Article).filter(
+            Article.status == ArticleStatus.UNREAD.value,
+            Article.embedding != None
+        ).limit(count).all()
+        
+        return {
+            "recommendations": [a.to_dict() for a in existing],
+            "source": "library",
+            "message": "Save more articles to get personalized recommendations"
+        }
+    
+    # Get existing URLs to avoid duplicates
+    existing_urls = [a.url for a in db.query(Article.url).all()]
+    
+    # Search for new articles based on interests
+    search_queries = [
+        f"{interests[0]} articles essays",
+        f"{interests[1] if len(interests) > 1 else interests[0]} blog post",
+    ]
+    
+    discovered = []
+    for query in search_queries[:2]:
+        try:
+            results = await search_articles(query, max_results=5)
+            for r in results:
+                # Skip if already exists or is research paper
+                if r.get("url") in existing_urls:
+                    continue
+                if is_research_paper(r.get("url", ""), r.get("source", ""), r.get("title", "")):
+                    continue
+                discovered.append(r)
+        except Exception as e:
+            print(f"Search error: {e}")
+    
+    # If we found new articles, generate embeddings and score them
+    if discovered:
+        for article in discovered[:count * 2]:
+            try:
+                embedding = await generate_article_embedding({
+                    "title": article.get("title", ""),
+                    "summary": article.get("summary", ""),
+                    "topics": article.get("topics", []),
+                    "source": article.get("source", "")
+                })
+                article["embedding"] = embedding
+            except:
+                pass
+        
+        # Score and rank
+        recommendations = get_recommendations(
+            user_profile=user_profile,
+            candidate_articles=discovered,
+            count=count,
+            serendipity_ratio=0.5
+        )
+        
+        # Remove embeddings from response
+        for rec in recommendations:
+            rec.pop("embedding", None)
+        
+        return {
+            "recommendations": recommendations,
+            "source": "web_search",
+            "interests_used": interests[:3]
+        }
+    
+    # Fallback to existing library
+    existing = db.query(Article).filter(
+        Article.status == ArticleStatus.UNREAD.value,
+        Article.embedding != None
+    ).limit(count).all()
+    
+    return {
+        "recommendations": [a.to_dict() for a in existing],
+        "source": "library",
+        "interests_used": interests[:3]
+    }
 
 
 # ============== Discovery Agent Endpoints ==============

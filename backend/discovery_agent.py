@@ -44,6 +44,55 @@ async def search_web(query: str, num_results: int = 10) -> list[dict]:
         ]
 
 
+async def search_articles(query: str, max_results: int = 5) -> list[dict]:
+    """
+    Search for articles matching a query.
+    
+    Filters out non-article results and returns article metadata.
+    """
+    try:
+        # Add article-focused terms to query
+        search_query = f"{query} article blog essay"
+        results = await search_web(search_query, num_results=max_results * 2)
+        
+        articles = []
+        for r in results[:max_results]:
+            articles.append({
+                "title": r.get("title", ""),
+                "url": r.get("url", ""),
+                "summary": r.get("snippet", ""),
+                "source": extract_source_from_url(r.get("url", "")),
+                "topics": [],  # Will be filled by embedding
+            })
+        
+        return articles
+    except Exception as e:
+        print(f"Search articles error: {e}")
+        return []
+
+
+def extract_source_from_url(url: str) -> str:
+    """Extract source name from URL."""
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        domain = parsed.netloc.replace("www.", "")
+        # Common mappings
+        source_map = {
+            "paulgraham.com": "Paul Graham",
+            "fs.blog": "Farnam Street",
+            "gatesnotes.com": "Gates Notes",
+            "waitbutwhy.com": "Wait But Why",
+            "stratechery.com": "Stratechery",
+            "seths.blog": "Seth Godin",
+            "medium.com": "Medium",
+            "substack.com": "Substack",
+        }
+        return source_map.get(domain, domain)
+    except:
+        return ""
+
+
 async def call_groq(prompt: str, system_prompt: str = None) -> str:
     """Call Groq API for reasoning."""
     if not GROQ_API_KEY:
