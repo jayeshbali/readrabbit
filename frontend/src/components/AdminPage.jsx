@@ -21,9 +21,18 @@ function AdminPage({ onBack }) {
   const [articles, setArticles] = useState([])
   const [stats, setStats] = useState(null)
   
-  // New: Toggle between AI and Manual mode
-  const [addMode, setAddMode] = useState('ai') // 'ai' | 'manual'
+  // Toggle between AI, Manual, and Discover mode
+  const [addMode, setAddMode] = useState('discover') // 'ai' | 'manual' | 'discover'
   const [manualForm, setManualForm] = useState(emptyArticle)
+
+  // Discovery state
+  const [discoverMode, setDiscoverMode] = useState('auto') // 'auto' | 'topic' | 'source' | 'similar'
+  const [discoverInput, setDiscoverInput] = useState('')
+  const [selectedArticleId, setSelectedArticleId] = useState('')
+  const [candidates, setCandidates] = useState([])
+  const [discoverContext, setDiscoverContext] = useState('')
+  const [libraryClusters, setLibraryClusters] = useState([])
+  const [approving, setApproving] = useState({}) // Track which URLs are being approved
 
   // Fetch stats and articles on mount
   useEffect(() => {
@@ -104,7 +113,6 @@ function AdminPage({ onBack }) {
       fetchStats()
       fetchArticles()
       
-      // Clear success message after 3 seconds
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
       setError(err.message)
@@ -203,6 +211,101 @@ function AdminPage({ onBack }) {
     }
   }
 
+  // Discovery functions
+  const handleDiscover = async () => {
+    setLoading(true)
+    setError(null)
+    setCandidates([])
+    setDiscoverContext('')
+    
+    try {
+      const body = {
+        mode: discoverMode,
+        count: 5,
+        match_library_style: true
+      }
+      
+      if (discoverMode === 'topic') {
+        if (!discoverInput.trim()) {
+          setError('Please enter a topic')
+          setLoading(false)
+          return
+        }
+        body.topic = discoverInput.trim()
+      } else if (discoverMode === 'source') {
+        if (!discoverInput.trim()) {
+          setError('Please enter an author or source name')
+          setLoading(false)
+          return
+        }
+        body.source = discoverInput.trim()
+      } else if (discoverMode === 'similar') {
+        if (!selectedArticleId) {
+          setError('Please select an article')
+          setLoading(false)
+          return
+        }
+        body.similar_to = selectedArticleId
+      }
+      
+      const res = await fetch(`${API_BASE}/admin/candidates`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      })
+      
+      const data = await res.json()
+      
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to discover articles')
+      }
+      
+      setCandidates(data.candidates || [])
+      setDiscoverContext(data.context || '')
+      setLibraryClusters(data.library_stats?.clusters || [])
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleApproveCandidate = async (candidateUrl, candidateTitle) => {
+    setApproving(prev => ({ ...prev, [candidateUrl]: true }))
+    setError(null)
+    
+    try {
+      const res = await fetch(`${API_BASE}/admin/candidates/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: candidateUrl })
+      })
+      
+      const data = await res.json()
+      
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to approve article')
+      }
+      
+      // Remove from candidates list
+      setCandidates(prev => prev.filter(c => c.url !== candidateUrl))
+      
+      setSuccess(`Added: ${candidateTitle}`)
+      fetchStats()
+      fetchArticles()
+      
+      setTimeout(() => setSuccess(null), 3000)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setApproving(prev => ({ ...prev, [candidateUrl]: false }))
+    }
+  }
+
+  const handleSkipCandidate = (candidateUrl) => {
+    setCandidates(prev => prev.filter(c => c.url !== candidateUrl))
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -222,92 +325,307 @@ function AdminPage({ onBack }) {
             </div>
             
             {stats && (
-              <div className="text-xs sm:text-sm text-gray-500">
-                {stats.total_articles} articles
+              <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-600">
+                <span><strong>{stats.total}</strong> articles</span>
               </div>
             )}
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-3 sm:px-4 py-4 sm:py-8">
-        {/* Add Article Section */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6 mb-6 sm:mb-8">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
-            <h2 className="text-base sm:text-lg font-semibold text-gray-900">Add Article</h2>
-            
-            {/* Mode Toggle - inline on mobile */}
-            <div className="inline-flex items-center bg-gray-100 rounded-lg p-1 self-start sm:self-auto">
-              <button
-                onClick={() => setAddMode('ai')}
-                className={`px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  addMode === 'ai' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                🤖 AI
-              </button>
-              <button
-                onClick={() => setAddMode('manual')}
-                className={`px-3 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-colors ${
-                  addMode === 'manual' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                ✏️ Manual
-              </button>
-            </div>
+      <main className="max-w-4xl mx-auto px-3 sm:px-4 py-4 sm:py-6 space-y-4 sm:space-y-6">
+        {/* Success/Error Messages */}
+        {success && (
+          <div className="bg-green-50 border border-green-200 text-green-700 px-4 py-3 rounded-lg text-sm">
+            {success}
+          </div>
+        )}
+        
+        {error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Add Article Card */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+          {/* Mode Toggle */}
+          <div className="flex gap-1 mb-4 sm:mb-6 bg-gray-100 p-1 rounded-lg">
+            <button
+              onClick={() => setAddMode('discover')}
+              className={`flex-1 py-2 px-2 sm:px-4 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                addMode === 'discover' 
+                  ? 'bg-white text-orange-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🔍 AI Discovery
+            </button>
+            <button
+              onClick={() => setAddMode('ai')}
+              className={`flex-1 py-2 px-2 sm:px-4 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                addMode === 'ai' 
+                  ? 'bg-white text-orange-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              🤖 Add by URL
+            </button>
+            <button
+              onClick={() => setAddMode('manual')}
+              className={`flex-1 py-2 px-2 sm:px-4 rounded-md text-xs sm:text-sm font-medium transition-colors ${
+                addMode === 'manual' 
+                  ? 'bg-white text-orange-600 shadow-sm' 
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              ✏️ Manual
+            </button>
           </div>
 
-          {/* Error */}
-          {error && (
-            <div className="p-3 bg-red-50 text-red-700 rounded-lg mb-4 text-sm">
-              {error}
+          {/* AI Discovery Mode */}
+          {addMode === 'discover' && (
+            <div className="space-y-4">
+              {/* Discovery Mode Selector */}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => { setDiscoverMode('auto'); setDiscoverInput(''); }}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    discoverMode === 'auto'
+                      ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  ✨ Auto
+                </button>
+                <button
+                  onClick={() => { setDiscoverMode('topic'); setDiscoverInput(''); }}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    discoverMode === 'topic'
+                      ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  📝 Topic
+                </button>
+                <button
+                  onClick={() => { setDiscoverMode('source'); setDiscoverInput(''); }}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    discoverMode === 'source'
+                      ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  👤 Author
+                </button>
+                <button
+                  onClick={() => { setDiscoverMode('similar'); setDiscoverInput(''); setSelectedArticleId(''); }}
+                  className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
+                    discoverMode === 'similar'
+                      ? 'bg-orange-100 text-orange-700 border border-orange-200'
+                      : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                  }`}
+                >
+                  🔗 Similar
+                </button>
+              </div>
+
+              {/* Input based on mode */}
+              {discoverMode === 'auto' && (
+                <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg">
+                  AI will discover articles based on your library clusters: 
+                  {libraryClusters.length > 0 
+                    ? ' ' + libraryClusters.map(c => c.name).join(', ')
+                    : ' Startups, Philosophy, Psychology...'}
+                </div>
+              )}
+
+              {discoverMode === 'topic' && (
+                <input
+                  type="text"
+                  value={discoverInput}
+                  onChange={(e) => setDiscoverInput(e.target.value)}
+                  placeholder="e.g., decision making, stoicism, mental models"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
+                  onKeyDown={(e) => e.key === 'Enter' && handleDiscover()}
+                />
+              )}
+
+              {discoverMode === 'source' && (
+                <input
+                  type="text"
+                  value={discoverInput}
+                  onChange={(e) => setDiscoverInput(e.target.value)}
+                  placeholder="e.g., Paul Graham, Morgan Housel, Farnam Street"
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
+                  onKeyDown={(e) => e.key === 'Enter' && handleDiscover()}
+                />
+              )}
+
+              {discoverMode === 'similar' && (
+                <select
+                  value={selectedArticleId}
+                  onChange={(e) => setSelectedArticleId(e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm bg-white"
+                >
+                  <option value="">Select an article to find similar...</option>
+                  {articles.map(article => (
+                    <option key={article.id} value={article.id}>
+                      {article.title}
+                    </option>
+                  ))}
+                </select>
+              )}
+
+              {/* Discover Button */}
+              <button
+                onClick={handleDiscover}
+                disabled={loading}
+                className="w-full py-3 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+              >
+                {loading ? (
+                  <span className="flex items-center justify-center gap-2">
+                    <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                    </svg>
+                    Discovering...
+                  </span>
+                ) : (
+                  'Find Articles'
+                )}
+              </button>
+
+              {/* Context Message */}
+              {discoverContext && (
+                <div className="text-xs text-gray-500 text-center">
+                  {discoverContext}
+                </div>
+              )}
+
+              {/* Candidates List */}
+              {candidates.length > 0 && (
+                <div className="space-y-3 pt-2">
+                  <h3 className="text-sm font-medium text-gray-700">
+                    Found {candidates.length} candidates
+                  </h3>
+                  
+                  {candidates.map((candidate, idx) => (
+                    <div 
+                      key={idx}
+                      className="border border-gray-200 rounded-lg p-4 space-y-2 hover:border-gray-300 transition-colors"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1 min-w-0">
+                          <a 
+                            href={candidate.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-medium text-gray-900 hover:text-orange-600 text-sm line-clamp-2"
+                          >
+                            {candidate.title}
+                          </a>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            <span className="text-xs text-gray-500">{candidate.source}</span>
+                            {candidate.match_score && (
+                              <span className={`text-xs px-2 py-0.5 rounded-full ${
+                                candidate.match_score >= 85 
+                                  ? 'bg-green-100 text-green-700'
+                                  : candidate.match_score >= 70
+                                  ? 'bg-yellow-100 text-yellow-700'
+                                  : 'bg-gray-100 text-gray-600'
+                              }`}>
+                                {candidate.match_score}% match
+                              </span>
+                            )}
+                            {candidate.matched_cluster && (
+                              <span className="text-xs text-gray-400">
+                                → {candidate.matched_cluster}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      
+                      {candidate.snippet && (
+                        <p className="text-xs text-gray-500 line-clamp-2">
+                          {candidate.snippet}
+                        </p>
+                      )}
+                      
+                      <div className="flex items-center gap-2 pt-1">
+                        <button
+                          onClick={() => handleApproveCandidate(candidate.url, candidate.title)}
+                          disabled={approving[candidate.url]}
+                          className="flex-1 py-2 bg-green-500 text-white text-sm font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 transition-colors"
+                        >
+                          {approving[candidate.url] ? 'Adding...' : '✓ Add to Library'}
+                        </button>
+                        <button
+                          onClick={() => handleSkipCandidate(candidate.url)}
+                          className="px-4 py-2 text-gray-500 text-sm font-medium rounded-lg hover:bg-gray-100 transition-colors"
+                        >
+                          Skip
+                        </button>
+                        <a
+                          href={candidate.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="px-3 py-2 text-gray-400 hover:text-gray-600 transition-colors"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                          </svg>
+                        </a>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Empty State */}
+              {!loading && candidates.length === 0 && discoverContext && (
+                <div className="text-center py-6 text-gray-500 text-sm">
+                  No candidates found. Try a different search.
+                </div>
+              )}
             </div>
           )}
 
-          {/* Success */}
-          {success && (
-            <div className="p-3 bg-green-50 text-green-700 rounded-lg mb-4 text-sm">
-              ✓ {success}
-            </div>
-          )}
-
-          {/* AI Mode */}
+          {/* AI Mode - Add by URL */}
           {addMode === 'ai' && (
             <>
-              {/* URL Input */}
-              <div className="flex flex-col sm:flex-row gap-2 sm:gap-3 mb-4">
+              <div className="flex flex-col sm:flex-row gap-2 sm:gap-3">
                 <input
                   type="url"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
                   placeholder="Paste article URL..."
-                  className="flex-1 px-3 sm:px-4 py-2.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm sm:text-base"
-                  onKeyDown={(e) => e.key === 'Enter' && handleExtract()}
+                  className="flex-1 px-4 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-orange-500 text-sm"
+                  onKeyDown={(e) => e.key === 'Enter' && handleQuickAdd()}
                 />
                 <div className="flex gap-2">
                   <button
-                    onClick={handleExtract}
-                    disabled={loading || !url.trim()}
-                    className="flex-1 sm:flex-none px-4 sm:px-5 py-2.5 bg-gray-100 text-gray-700 font-medium rounded-lg hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
-                  >
-                    Preview
-                  </button>
-                  <button
                     onClick={handleQuickAdd}
                     disabled={loading || !url.trim()}
-                    className="flex-1 sm:flex-none px-4 sm:px-5 py-2.5 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                    className="flex-1 sm:flex-none px-4 sm:px-5 py-3 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm whitespace-nowrap"
                   >
                     {loading ? 'Adding...' : 'Quick Add'}
+                  </button>
+                  <button
+                    onClick={handleExtract}
+                    disabled={loading || !url.trim()}
+                    className="flex-1 sm:flex-none px-4 sm:px-5 py-3 border border-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm whitespace-nowrap"
+                  >
+                    Preview
                   </button>
                 </div>
               </div>
 
-              {/* Preview */}
+              {/* Preview Card */}
               {preview && (
-                <div className="border border-gray-200 rounded-lg p-3 sm:p-4 bg-gray-50">
-                  <h3 className="font-semibold text-gray-900 mb-2 text-sm sm:text-base">Preview</h3>
-                  
-                  <div className="space-y-3 mb-4">
+                <div className="mt-4 sm:mt-6 border border-gray-200 rounded-lg p-3 sm:p-4 space-y-3">
+                  <div className="space-y-3">
                     <div>
                       <label className="text-xs text-gray-500 uppercase tracking-wide">Title</label>
                       <input
@@ -317,7 +635,7 @@ function AdminPage({ onBack }) {
                         className="w-full px-3 py-2 border border-gray-200 rounded-lg mt-1 text-sm"
                       />
                     </div>
-                    
+
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
                         <label className="text-xs text-gray-500 uppercase tracking-wide">Source</label>
