@@ -595,12 +595,19 @@ async def get_candidates(
         if not request.source:
             raise HTTPException(status_code=400, detail="Source required for source mode")
         
+        # Better queries that find actual articles, not index pages
+        # Use "by [Author]" to find bylines
+        # Combine with topics from user's library for relevance
+        clusters = build_interest_clusters(library_dicts)
+        top_topics = [c.name for c in clusters[:2]] if clusters else ["essays", "insights"]
+        
         search_queries = [
-            f"{request.source} articles",
-            f"{request.source} essays blog",
-            f"{request.source} best writing"
+            f'"{request.source}" essay',  # Exact match in quotes
+            f"by {request.source} {top_topics[0]}",  # Author + topic
+            f"{request.source} {top_topics[1] if len(top_topics) > 1 else 'writing'} article",
+            f"{request.source} best essay must read",
         ]
-        context_message = f"Finding more from: {request.source}"
+        context_message = f"Finding articles by: {request.source}"
     
     else:
         raise HTTPException(status_code=400, detail=f"Unknown mode: {request.mode}")
@@ -641,13 +648,43 @@ async def get_candidates(
         if is_research_paper(url, "", title):
             continue
         
-        # Skip common non-article pages
-        skip_patterns = [
-            "/tag/", "/category/", "/author/", "/search",
-            "linkedin.com", "twitter.com", "youtube.com",
-            "amazon.com", "goodreads.com"
+        # Skip common non-article pages (URL patterns)
+        skip_url_patterns = [
+            "/tag/", "/category/", "/author/", "/authors/", "/search",
+            "/blog/$", "/articles/$", "/essays/$", "/archive",  # Index pages
+            "/page/", "/p/", "?page=",  # Pagination
+            "linkedin.com", "twitter.com", "youtube.com", "x.com",
+            "amazon.com", "goodreads.com", "wikipedia.org",
+            "/about", "/contact", "/subscribe", "/newsletter"
         ]
-        if any(pattern in url.lower() for pattern in skip_patterns):
+        url_lower = url.lower()
+        if any(pattern.rstrip('$') in url_lower for pattern in skip_url_patterns):
+            # Check for exact endings (patterns with $)
+            is_index = False
+            for pattern in skip_url_patterns:
+                if pattern.endswith('$'):
+                    clean_pattern = pattern.rstrip('$')
+                    if url_lower.endswith(clean_pattern) or url_lower.endswith(clean_pattern + '/'):
+                        is_index = True
+                        break
+                elif pattern in url_lower:
+                    is_index = True
+                    break
+            if is_index:
+                continue
+        
+        # Skip index-like titles
+        skip_title_patterns = [
+            "articles by", "essays by", "posts by", "writing by",
+            "all articles", "all essays", "all posts", "blog home",
+            "archive", "index", " | blog", "- blog"
+        ]
+        title_lower = title.lower()
+        if any(pattern in title_lower for pattern in skip_title_patterns):
+            continue
+        
+        # Skip if title is just an author/source name (likely an index page)
+        if len(title.split()) <= 2 and title.lower() in ["blog", "essays", "articles", "writing"]:
             continue
         
         candidate = {
