@@ -1689,6 +1689,24 @@ def debug_youtube(url: str):
     }
 
 
+@app.get("/api/admin/run-tests")
+def run_tests():
+    """Run the test suite and return results. Side project only."""
+    import subprocess
+    import sys
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/", "-v", "--tb=short"],
+        capture_output=True,
+        text=True,
+        cwd=os.path.dirname(os.path.abspath(__file__))
+    )
+    return {
+        "passed": result.returncode == 0,
+        "output": result.stdout,
+        "errors": result.stderr,
+    }
+
+
 if __name__ == "__main__":
     import uvicorn
     port = int(os.getenv("PORT", 8000))
