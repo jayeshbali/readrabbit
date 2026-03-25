@@ -33,14 +33,16 @@ def make_embedding(value: float, dims: int = 4) -> list:
     return [v / magnitude for v in vec] if magnitude > 0 else vec
 
 
-def make_article(id: str, topics: list, embedding=None, url: str = None, source: str = "", title: str = "", saved_at=None):
+_UNSET = object()
+
+def make_article(id: str, topics: list, embedding=_UNSET, url: str = None, source: str = "", title: str = "", saved_at=None):
     return {
         "id": id,
         "title": title or f"Article {id}",
         "url": url or f"https://example.com/{id}",
         "source": source,
         "topics": topics,
-        "embedding": embedding or make_embedding(0.5),
+        "embedding": make_embedding(0.5) if embedding is _UNSET else embedding,
         "saved_at": saved_at,
     }
 
