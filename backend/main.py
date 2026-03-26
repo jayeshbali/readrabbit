@@ -38,11 +38,16 @@ def run_migrations():
     try:
         # Add embedding column if it doesn't exist
         db.execute(text("""
-            ALTER TABLE articles 
+            ALTER TABLE articles
             ADD COLUMN IF NOT EXISTS embedding FLOAT[]
         """))
+        # Add is_saved column if it doesn't exist
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS is_saved INTEGER DEFAULT 0
+        """))
         db.commit()
-        print("Database migration completed - embedding column ready")
+        print("Database migration completed - embedding + is_saved columns ready")
     except Exception as e:
         db.rollback()
         print(f"Migration note: {e}")
@@ -373,6 +378,18 @@ def dismiss_article(article_id: str, db: Session = Depends(get_db)):
     db.commit()
     shown_article_ids.add(article_id)
     return {"status": "dismissed", "article_id": article_id}
+
+
+@app.post("/api/articles/{article_id}/save")
+def save_article(article_id: str, db: Session = Depends(get_db)):
+    """Toggle save on an article (signals positive interest for recommendations)."""
+    db_article = db.query(Article).filter(Article.id == article_id).first()
+    if not db_article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    db_article.is_saved = 0 if db_article.is_saved else 1
+    db.commit()
+    return {"status": "saved" if db_article.is_saved else "unsaved", "article_id": article_id}
 
 
 @app.post("/api/articles/reset")
@@ -1205,15 +1222,34 @@ async def get_recommendations_endpoint(
         explain_recommendations
     )
     
-    # Get all saved articles (for now, using all with status != Dismissed as "saved")
+    # Get articles the user explicitly saved (bookmarked)
     saved_articles = db.query(Article).filter(
-        Article.status != ArticleStatus.DISMISSED.value
+        Article.is_saved == 1
     ).all()
-    
+
     # Get dismissed articles
     dismissed_articles = db.query(Article).filter(
         Article.status == ArticleStatus.DISMISSED.value
     ).all()
+
+    # If no saves yet, fall back to random articles
+    if not saved_articles:
+        all_articles = db.query(Article).filter(
+            Article.status != ArticleStatus.DISMISSED.value,
+            Article.embedding != None
+        ).all()
+        import random
+        random.shuffle(all_articles)
+        results = [
+            {k: v for k, v in {
+                "id": a.id, "title": a.title, "url": a.url,
+                "source": a.source, "author": a.author, "summary": a.summary,
+                "topics": a.topics or [], "read_time": a.read_time,
+                "recommendation_type": "random", "recommendation_score": 0.0
+            }.items()}
+            for a in all_articles[:count]
+        ]
+        return {"recommendations": results, "user_interests": [], "profile_stats": {"saved_count": 0, "dismissed_count": len(dismissed_articles), "clusters": [], "top_topics": []}}
     
     # Convert to dicts with created_at for recency weighting
     saved_dicts = [

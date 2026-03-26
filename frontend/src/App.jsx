@@ -68,15 +68,30 @@ function App() {
       setShuffling(true)
       loadStartTime.current = Date.now()
       const count = viewMode === 'single' ? 1 : 4
-      const response = await fetch(`${API_BASE}/articles/random?count=${count}`)
-      if (!response.ok) throw new Error('Failed to fetch articles')
-      const data = await response.json()
-      
+
+      // Use recommendations if user has saved articles, otherwise random
+      const savedIds = JSON.parse(localStorage.getItem('readrabbit_saved') || '[]')
+      let fetchedArticles = []
+
+      if (savedIds.length > 0) {
+        const response = await fetch(`${API_BASE}/recommendations?count=${count}`)
+        if (!response.ok) throw new Error('Failed to fetch recommendations')
+        const data = await response.json()
+        fetchedArticles = data.recommendations || []
+      }
+
+      // Fall back to random if no recommendations returned
+      if (fetchedArticles.length === 0) {
+        const response = await fetch(`${API_BASE}/articles/random?count=${count}`)
+        if (!response.ok) throw new Error('Failed to fetch articles')
+        const data = await response.json()
+        fetchedArticles = data.articles || []
+      }
+
       if (append && viewMode === 'feed') {
-        // Append new articles to existing ones
-        setArticles(prev => [...prev, ...data.articles])
+        setArticles(prev => [...prev, ...fetchedArticles])
       } else {
-        setArticles(data.articles)
+        setArticles(fetchedArticles)
       }
       
       setSingleIndex(0)
@@ -156,6 +171,8 @@ function App() {
       setSavedArticles((prev) => [...prev, article])
       showToast('Saved for later! 🐰')
     }
+    // Tell backend so recommendation engine can learn your interests
+    fetch(`${API_BASE}/articles/${article.id}/save`, { method: 'POST' }).catch(() => {})
   }
 
   const isArticleSaved = (articleId) => {

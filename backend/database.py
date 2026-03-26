@@ -59,6 +59,9 @@ class Article(Base):
     # Embedding for recommendations (1536 dimensions for OpenAI text-embedding-3-small)
     embedding = Column(ARRAY(Float))
 
+    # User explicitly saved this article (bookmarked in UI)
+    is_saved = Column(Integer, default=0)  # 0=not saved, 1=saved
+
     # Relationship to saved articles
     saved_by = relationship("SavedArticle", back_populates="article")
 
