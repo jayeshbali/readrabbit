@@ -139,44 +139,54 @@ async def call_groq(prompt: str, system_prompt: str = None) -> str:
 
 async def analyze_input_content(input_text: str, input_type: str) -> dict:
     """
-    Analyze the input (article, podcast, tweet, or free text) to extract themes.
+    Analyze the input (article, podcast, tweet, or free text) to extract intellectual DNA.
+    Returns angles, named thinkers, intellectual stance, and main domain for typed query generation.
+    Falls back to legacy topic-based schema on parse failure.
     """
-    prompt = f"""You are analyzing a {input_type} to understand what topics it discusses.
+    from datetime import datetime
+    current_year = datetime.now().year
+    year_start = current_year - 6
+
+    prompt = f"""You are analyzing a {input_type} to extract its intellectual DNA — not just what it discusses, but HOW it thinks.
 
 Content to analyze:
 {input_text}
 
-IMPORTANT: Extract what this content is ABOUT - the actual subjects, ideas, and themes discussed. 
-Do NOT extract meta-concepts about analysis methods or how to process content.
-
-For example:
-- If it's a podcast about investing and AI, extract: ["Investing", "Artificial Intelligence", "Startups"]
-- If it discusses mental models and decision-making, extract: ["Mental Models", "Decision Making", "Psychology"]
-- If it's about a specific person's philosophy, extract their key ideas and domains
+IMPORTANT RULES:
+- Extract the PERSPECTIVE, not just the topic. "Compounding advantages drive startup success" is better than "Startups".
+- core_claim must be a falsifiable assertion (something that could be argued against), not a description.
+- core_claim_keywords: 2-3 words distilled from core_claim, suitable for a search query.
+- intellectual_tradition: the school of thought or reasoning style (e.g. "first-principles thinking", "long-termism", "behavioral economics", "stoicism", "contrarian investing").
+- named_thinkers: actual names of thinkers, authors, or intellectual figures referenced or clearly implied.
+- Do NOT include domain names (e.g. medium.com) in any field values.
+- Extract 1-3 angles. If only 1 strong angle exists, that is fine — do not invent angles.
 
 Respond with ONLY valid JSON (no markdown, no explanation):
 {{
-    "main_topics": ["topic1", "topic2", "topic3"],
-    "key_concepts": ["specific concept or idea discussed", "another concept"],
-    "related_fields": ["broader field 1", "broader field 2"],
-    "suggested_search_queries": [
-        "search query 1 for finding similar articles",
-        "search query 2 for finding similar articles",
-        "search query 3 for finding similar articles"
-    ]
+    "angles": [
+        {{
+            "label": "short name for this angle (3-5 words)",
+            "core_claim": "the specific argument or stance, phrased as a falsifiable assertion",
+            "core_claim_keywords": "2-3 word search phrase",
+            "intellectual_tradition": "e.g. first-principles thinking"
+        }}
+    ],
+    "named_thinkers": ["name1", "name2"],
+    "intellectual_stance": "contrarian | mainstream | empirical | first-principles | philosophical",
+    "main_domain": "primary subject area (1-3 words)",
+    "main_topics": ["topic1", "topic2"],
+    "key_concepts": ["concept1", "concept2"]
 }}
 
-For search queries, create specific queries that would find high-quality long-form articles on the SAME topics discussed in this content. Include terms like "essay", "guide", "deep dive", or names of thinkers/authors who write about these topics.
+Examples of GOOD angle extraction for a Paul Graham essay on startups:
+- label: "compounding startup advantages"
+- core_claim: "Early momentum compounds into durable competitive advantages for startups"
+- core_claim_keywords: "compounding startup advantages"
+- intellectual_tradition: "first-principles thinking"
 
-Examples of GOOD search queries for a podcast about Bitcoin and first principles:
-- "first principles thinking essays"
-- "bitcoin investment philosophy long-form"  
-- "Chamath Palihapitiya investing strategy"
-
-Examples of BAD search queries (too meta, do not use these):
-- "how to analyze podcast themes"
-- "topic modeling methods"
-- "thematic analysis guide"
+Examples of BAD (too broad):
+- label: "startups" (not an angle, just a topic)
+- core_claim: "This article discusses startups and business strategy" (description, not assertion)
 
 Respond with ONLY the JSON object, nothing else."""
 
@@ -323,15 +333,73 @@ async def run_discovery_agent(
         analysis_input = input_content
     
     themes = await analyze_input_content(analysis_input, input_type)
-    print(f"[Agent] Identified themes: {themes['main_topics']}")
-    
-    # Step 2: Search for similar content
+    angles = themes.get("angles", [])
+    print(f"[Agent] Identified {len(angles)} angle(s): {[a.get('label') for a in angles]}")
+
+    # Step 2: Build typed queries from intellectual DNA
+    from datetime import datetime
+    current_year = datetime.now().year
+    year_start = current_year - 6
+
+    # Domain exclusion suffix for all non-community queries
+    domain_exclusion = "-site:medium.com -site:forbes.com -site:techcrunch.com -site:businessinsider.com"
+
+    def angle_field(angle: dict, field: str, fallback: str = "") -> str:
+        return (angle.get(field) or fallback).strip()
+
+    # Select angles for each query slot (rotate through available angles)
+    a0 = angles[0] if len(angles) > 0 else {}
+    a1 = angles[1] if len(angles) > 1 else a0
+    a2 = angles[2] if len(angles) > 2 else a0
+
+    named_thinkers = themes.get("named_thinkers", [])
+    intellectual_stance = themes.get("intellectual_stance", "")
+    main_domain = themes.get("main_domain", "")
+
+    search_queries = []
+
+    # Query 1: AUTHOR-TARGETED — same intellectual lineage
+    thinker_str = " OR ".join(named_thinkers[:2]) if named_thinkers else ""
+    kw0 = angle_field(a0, "core_claim_keywords") or angle_field(a0, "label")
+    trad0 = angle_field(a0, "intellectual_tradition") or main_domain
+    if thinker_str and kw0:
+        search_queries.append(f'({thinker_str}) essay {kw0} {domain_exclusion}')
+    elif trad0:
+        search_queries.append(f'{trad0} essays long-form {domain_exclusion}')
+
+    # Query 2: COMMUNITY-SCOPED — indie ecosystems, no -site: exclusion
+    kw1 = angle_field(a1, "core_claim_keywords") or angle_field(a1, "label")
+    trad1 = angle_field(a1, "intellectual_tradition") or main_domain
+    if kw1:
+        search_queries.append(
+            f'(site:substack.com OR site:lesswrong.com OR site:paulgraham.com) {kw1} {trad1}'
+        )
+
+    # Query 3: SPECIFIC CLAIM + YEAR RANGE — bypass SEO-heavy recent content
+    kw2 = angle_field(a2, "core_claim_keywords") or angle_field(a2, "label")
+    if kw2:
+        search_queries.append(f'{kw2} essay {year_start}..{current_year} {domain_exclusion}')
+
+    # Query 4: CONTRARIAN — sharpest disagreement surfaces great writing
+    if kw0 and trad0:
+        search_queries.append(f'against {kw0} OR critique {trad0} {domain_exclusion}')
+
+    # Query 5: ADJACENT DOMAIN — same mental model, different field
+    if trad0 and main_domain:
+        adjacent_query = f'{trad0} {domain_exclusion}'
+        if main_domain.lower() not in trad0.lower():
+            adjacent_query = f'{trad0} applied {domain_exclusion}'
+        search_queries.append(adjacent_query)
+
+    # Fallback: if new schema produced no queries, fall back to legacy suggested_search_queries
+    if not search_queries:
+        search_queries = themes.get("suggested_search_queries", [])[:3]
+        print("[Agent] Falling back to legacy topic queries")
+
     all_results = []
-    search_queries = themes.get("suggested_search_queries", [])[:3]
-    
-    for query in search_queries:
+    for query in search_queries[:5]:
         print(f"[Agent] Searching: {query}")
-        results = await search_web(query, num_results=10)
+        results = await search_web(query, num_results=8)
         all_results.extend(results)
     
     # Remove duplicates and existing URLs
