@@ -38,3 +38,4 @@ dist/
 
 # Render / deployment
 *.log
+.gstack/

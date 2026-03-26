@@ -15,6 +15,7 @@ function App() {
   
   // UI State
   const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'saved'
+  const [similarSource, setSimilarSource] = useState(null) // article that triggered "more like this"
   const [viewMode, setViewMode] = useState('feed') // 'feed' | 'single'
   const [singleIndex, setSingleIndex] = useState(0) // For single view navigation
   const [showAdmin, setShowAdmin] = useState(false) // Admin page toggle
@@ -177,6 +178,22 @@ function App() {
 
   const isArticleSaved = (articleId) => {
     return savedArticles.some((a) => a.id === articleId)
+  }
+
+  const handleSimilar = async (article) => {
+    try {
+      setShuffling(true)
+      setSimilarSource(article)
+      const response = await fetch(`${API_BASE}/articles/${article.id}/similar?count=4`)
+      if (!response.ok) throw new Error('Failed to fetch similar articles')
+      const data = await response.json()
+      setArticles(data.similar_articles || [])
+      setSingleIndex(0)
+    } catch (err) {
+      showToast('Could not find similar articles', 'error')
+    } finally {
+      setShuffling(false)
+    }
   }
 
   const handleShowMore = () => {
@@ -419,7 +436,7 @@ function App() {
           <div className="flex justify-center">
             <div className="inline-flex bg-gray-100 rounded-full p-1">
               <button
-                onClick={() => setActiveTab('discover')}
+                onClick={() => { setActiveTab('discover'); setSimilarSource(null); }}
                 className={`px-4 sm:px-6 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
                   activeTab === 'discover'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -429,7 +446,7 @@ function App() {
                 Discover
               </button>
               <button
-                onClick={() => setActiveTab('saved')}
+                onClick={() => { setActiveTab('saved'); setSimilarSource(null); }}
                 className={`px-4 sm:px-6 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
                   activeTab === 'saved'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -458,8 +475,28 @@ function App() {
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
       >
-        {/* Value Prop - shown on Discover tab */}
-        {activeTab === 'discover' && articles.length > 0 && (
+        {/* Similar mode banner */}
+        {similarSource && activeTab === 'discover' && (
+          <div className="flex items-center gap-3 mb-4 sm:mb-6 px-1">
+            <button
+              onClick={() => { setSimilarSource(null); fetchArticles(); }}
+              className="flex items-center gap-1.5 text-sm text-orange-600 hover:text-orange-700 font-medium transition-colors"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+              Back to feed
+            </button>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-gray-500 truncate">
+                Similar to: <span className="font-medium text-gray-700">{similarSource.title}</span>
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Value Prop - shown on Discover tab when not in similar mode */}
+        {activeTab === 'discover' && articles.length > 0 && !similarSource && (
           <div className="text-center mb-6 sm:mb-8">
             <h1 className="text-lg sm:text-2xl font-bold text-gray-900 mb-1 sm:mb-2">
               Stop scrolling. Start reading.
@@ -504,6 +541,7 @@ function App() {
                 article={activeTab === 'saved' ? displayArticles[singleIndex % displayArticles.length] : displayArticles[0]}
                 onDismiss={handleDismiss}
                 onSave={handleSave}
+                onSimilar={handleSimilar}
                 isSaved={isArticleSaved(activeTab === 'saved' ? displayArticles[singleIndex % displayArticles.length]?.id : displayArticles[0]?.id)}
                 viewMode="single"
               />
@@ -522,6 +560,7 @@ function App() {
                   article={article}
                   onDismiss={handleDismiss}
                   onSave={handleSave}
+                  onSimilar={handleSimilar}
                   isSaved={isArticleSaved(article.id)}
                   viewMode="cards"
                 />

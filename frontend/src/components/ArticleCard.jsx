@@ -1,6 +1,6 @@
 import React, { useState, useRef } from 'react'
 
-function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }) {
+function ArticleCard({ article, onDismiss, onSave, onSimilar, isSaved, viewMode = 'cards' }) {
   const { title, url, source, author, read_time, topics, summary } = article
   
   // Swipe state for single view
@@ -166,8 +166,8 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           <button
             onClick={() => { vibrate(15); onSave(article) }}
             className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 text-sm font-medium rounded-xl active:scale-95 transition-transform ${
-              isSaved 
-                ? 'bg-gray-900 text-white' 
+              isSaved
+                ? 'bg-gray-900 text-white'
                 : 'bg-gray-100 text-gray-700'
             }`}
           >
@@ -176,6 +176,17 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
             </svg>
             {isSaved ? 'Saved' : 'Save'}
           </button>
+          {onSimilar && (
+            <button
+              onClick={() => { vibrate(15); onSimilar(article) }}
+              className="flex-1 flex items-center justify-center gap-1.5 py-2.5 bg-orange-50 text-orange-600 text-sm font-medium rounded-xl active:scale-95 transition-transform"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+              More
+            </button>
+          )}
           <a
             href={url}
             target="_blank"
@@ -194,8 +205,8 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
           <button
             onClick={() => { vibrate(); onSave(article) }}
             className={`flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-medium transition-colors ${
-              isSaved 
-                ? 'bg-gray-900 text-white' 
+              isSaved
+                ? 'bg-gray-900 text-white'
                 : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
             }`}
           >
@@ -213,6 +224,17 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
             </svg>
             Skip
           </button>
+          {onSimilar && (
+            <button
+              onClick={() => { vibrate(); onSimilar(article) }}
+              className="flex items-center justify-center gap-2 px-5 py-2.5 rounded-lg font-medium bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors ml-auto"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+              </svg>
+              More like this
+            </button>
+          )}
         </div>
         
         {/* Spacer for bottom bar on mobile */}
@@ -301,6 +323,17 @@ function ArticleCard({ article, onDismiss, onSave, isSaved, viewMode = 'cards' }
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
           </svg>
         </button>
+        {onSimilar && (
+          <button
+            onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSimilar(article) }}
+            className="flex items-center justify-center p-2 bg-orange-50 text-orange-600 rounded-lg hover:bg-orange-100 transition-colors"
+            title="More like this"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />
+            </svg>
+          </button>
+        )}
         <a
           href={url}
           target="_blank"
