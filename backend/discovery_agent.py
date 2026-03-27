@@ -213,15 +213,22 @@ async def evaluate_search_results(results: list[dict], themes: dict) -> list[dic
         for i, r in enumerate(results)
     ])
     
-    themes_text = f"""
-Topics: {', '.join(themes.get('main_topics', []))}
-Concepts: {', '.join(themes.get('key_concepts', []))}
-Fields: {', '.join(themes.get('related_fields', []))}
-"""
-    
+    angles = themes.get("angles", [])
+    if angles:
+        angles_text = "\n".join([
+            f"- {a.get('label', '')}: {a.get('core_claim', '')} [{a.get('intellectual_tradition', '')}]"
+            for a in angles
+        ])
+        named_thinkers = themes.get("named_thinkers", [])
+        thinkers_text = f"\nThinkers: {', '.join(named_thinkers)}" if named_thinkers else ""
+        themes_text = f"Angles:\n{angles_text}{thinkers_text}"
+    else:
+        themes_text = f"""Topics: {', '.join(themes.get('main_topics', []))}
+Concepts: {', '.join(themes.get('key_concepts', []))}"""
+
     prompt = f"""You are evaluating search results to find high-quality long-form articles.
 
-Target themes:
+The source article has these intellectual angles:
 {themes_text}
 
 Search results:
@@ -230,7 +237,7 @@ Search results:
 Evaluate each result and select the BEST ones that are:
 1. Long-form articles or essays (not listicles, not news, not product pages)
 2. From reputable sources (personal blogs of experts, quality publications)
-3. Highly relevant to the target themes
+3. Engaging with the same specific perspective or intellectual tradition — not just the same broad topic
 4. Likely to provide deep insights (not surface-level content)
 
 EXCLUDE:
