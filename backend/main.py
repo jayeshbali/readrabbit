@@ -34,7 +34,7 @@ def run_migrations():
     """Run database migrations to add new columns."""
     if not SessionLocal:
         return
-    
+
     db = SessionLocal()
     try:
         # Add embedding column if it doesn't exist
@@ -47,11 +47,42 @@ def run_migrations():
             ALTER TABLE articles
             ADD COLUMN IF NOT EXISTS is_saved INTEGER DEFAULT 0
         """))
+        # Add groq_quality_score column if it doesn't exist (Phase 3A)
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS groq_quality_score FLOAT
+        """))
         db.commit()
-        print("Database migration completed - embedding + is_saved columns ready")
+        print("Database migration completed - embedding + is_saved + groq_quality_score columns ready")
     except Exception as e:
         db.rollback()
         print(f"Migration note: {e}")
+    finally:
+        db.close()
+
+    # Create eval_events table and drop reading_history FK (Phase 3C) — separate transaction
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS eval_events (
+                id VARCHAR PRIMARY KEY,
+                event_type VARCHAR(100) NOT NULL,
+                article_id VARCHAR REFERENCES articles(id) ON DELETE SET NULL,
+                user_id VARCHAR,
+                metadata JSON,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        # Drop FK constraint on reading_history.user_id if it exists
+        db.execute(text("""
+            ALTER TABLE reading_history
+            DROP CONSTRAINT IF EXISTS reading_history_user_id_fkey
+        """))
+        db.commit()
+        print("Phase 3 schema ready - eval_events table, reading_history FK removed")
+    except Exception as e:
+        db.rollback()
+        print(f"Phase 3 migration note: {e}")
     finally:
         db.close()
 
