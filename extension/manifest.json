@@ -4,6 +4,7 @@
   "version": "1.0.0",
   "description": "Save articles to your ReadRabbit reading list with one click",
   "permissions": ["activeTab"],
+  "host_permissions": ["https://readrabbit.onrender.com/*"],
   "action": {
     "default_popup": "popup.html",
     "default_icon": {
