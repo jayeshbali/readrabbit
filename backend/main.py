@@ -11,7 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 # Database imports
-from database import get_db, init_db, Article, SourceType, ArticleStatus, SessionLocal, ReadingHistory, EvalEvent
+from database import get_db, init_db, Article, SourceType, ArticleStatus, SessionLocal, ReadingHistory, EvalEvent, User
 
 # Check if database is configured
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -449,6 +449,34 @@ def reset_shown():
     """Reset shown articles tracking."""
     shown_article_ids.clear()
     return {"status": "reset"}
+
+
+# ============== User Endpoints ==============
+
+class UserUpsertRequest(BaseModel):
+    id: str
+    email: Optional[str] = None
+    name: Optional[str] = None
+
+
+@app.post("/api/users/me")
+def upsert_user(body: UserUpsertRequest, db: Session = Depends(get_db)):
+    """Create or update a user record (called after Clerk sign-in)."""
+    existing = db.query(User).filter(User.id == body.id).first()
+    if existing:
+        if body.name:
+            existing.name = body.name
+        db.commit()
+        return {"status": "updated", "user_id": existing.id}
+    else:
+        new_user = User(
+            id=body.id,
+            email=body.email or f"{body.id}@unknown.invalid",
+            name=body.name,
+        )
+        db.add(new_user)
+        db.commit()
+        return {"status": "created", "user_id": new_user.id}
 
 
 # ============== Admin Endpoints ==============

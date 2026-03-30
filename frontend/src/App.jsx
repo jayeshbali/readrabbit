@@ -1,21 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
+import { useUser, SignIn, UserButton } from '@clerk/clerk-react'
+import posthog from 'posthog-js'
 import ArticleCard from './components/ArticleCard'
 import AdminPage from './components/AdminPage'
 import DiscoverAgent from './components/DiscoverAgent'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
-// Get or create anonymous user UUID (persists in localStorage)
-function getOrCreateUserId() {
-  let id = localStorage.getItem('readrabbit_user_id')
-  if (!id) {
-    id = crypto.randomUUID()
-    localStorage.setItem('readrabbit_user_id', id)
-  }
-  return id
-}
-
 function App() {
+  const { isSignedIn, isLoaded: isAuthLoaded, user } = useUser()
   const [articles, setArticles] = useState([])
   const [savedArticles, setSavedArticles] = useState([])
   const [loading, setLoading] = useState(true)
@@ -28,7 +21,38 @@ function App() {
   const [forYouLoading, setForYouLoading] = useState(false)
   const [forYouColdStart, setForYouColdStart] = useState(false)
   const [forYouMessage, setForYouMessage] = useState(null)
-  const userId = useRef(getOrCreateUserId())
+  // Use Clerk user ID when authenticated, fall back to anonymous UUID
+  const userId = useRef(null)
+
+  // Sync Clerk user ID and register user in backend on sign-in
+  useEffect(() => {
+    if (isSignedIn && user) {
+      userId.current = user.id
+      // Identify in PostHog
+      posthog?.identify(user.id, {
+        email: user.primaryEmailAddress?.emailAddress,
+        name: user.fullName,
+      })
+      // Upsert user record in backend (best-effort)
+      fetch(`${API_BASE}/users/me`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: user.id,
+          email: user.primaryEmailAddress?.emailAddress,
+          name: user.fullName,
+        }),
+      }).catch(() => {})
+    } else if (!isSignedIn) {
+      // Fallback anonymous ID for unauthenticated state
+      let anonId = localStorage.getItem('readrabbit_user_id')
+      if (!anonId) {
+        anonId = crypto.randomUUID()
+        localStorage.setItem('readrabbit_user_id', anonId)
+      }
+      userId.current = anonId
+    }
+  }, [isSignedIn, user])
 
   // UI State
   const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'for-you' | 'saved'
@@ -68,6 +92,22 @@ function App() {
   useEffect(() => {
     localStorage.setItem('readrabbit_saved', JSON.stringify(savedArticles))
   }, [savedArticles])
+
+  // Auth gate — show sign-in if Clerk loaded and user is not signed in
+  if (isAuthLoaded && !isSignedIn) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
+        <div className="mb-8 flex flex-col items-center gap-3">
+          <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl shadow-orange-500/25">
+            <span className="text-3xl">🐰</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">ReadRabbit</h1>
+          <p className="text-sm text-gray-500">Your personalised reading feed</p>
+        </div>
+        <SignIn routing="hash" />
+      </div>
+    )
+  }
 
   // Show "waking up" message if loading takes > 3 seconds
   useEffect(() => {
@@ -196,6 +236,7 @@ function App() {
   }
 
   const handleDismiss = async (articleId) => {
+    posthog?.capture('article_dismissed', { article_id: articleId, tab: activeTab })
     try {
       await fetch(`${API_BASE}/articles/${articleId}/dismiss`, { method: 'POST' })
       
@@ -225,9 +266,11 @@ function App() {
     if (isAlreadySaved) {
       setSavedArticles((prev) => prev.filter((a) => a.id !== article.id))
       showToast('Removed from saved')
+      posthog?.capture('article_unsaved', { article_id: article.id, tab: activeTab })
     } else {
       setSavedArticles((prev) => [...prev, article])
       showToast('Saved for later! 🐰')
+      posthog?.capture('article_saved', { article_id: article.id, tab: activeTab, topics: article.topics })
     }
     // Tell backend so recommendation engine can learn your interests
     fetch(`${API_BASE}/articles/${article.id}/save`, { method: 'POST' }).catch(() => {})
@@ -482,6 +525,9 @@ function App() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
                 </svg>
               </button>
+              {isSignedIn && (
+                <UserButton afterSignOutUrl="/" />
+              )}
             </div>
           </div>
         </div>
@@ -493,7 +539,7 @@ function App() {
           <div className="flex justify-center">
             <div className="inline-flex bg-gray-100 rounded-full p-1">
               <button
-                onClick={() => { setActiveTab('discover'); setSimilarSource(null); }}
+                onClick={() => { setActiveTab('discover'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'discover' }) }}
                 className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
                   activeTab === 'discover'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -503,7 +549,7 @@ function App() {
                 Discover
               </button>
               <button
-                onClick={() => { setActiveTab('for-you'); setSimilarSource(null); }}
+                onClick={() => { setActiveTab('for-you'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'for-you' }) }}
                 className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
                   activeTab === 'for-you'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -513,7 +559,7 @@ function App() {
                 For You
               </button>
               <button
-                onClick={() => { setActiveTab('saved'); setSimilarSource(null); }}
+                onClick={() => { setActiveTab('saved'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'saved' }) }}
                 className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
                   activeTab === 'saved'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -618,7 +664,10 @@ function App() {
                     key={article.id}
                     className="animate-fade-in"
                     style={{ animationDelay: `${index * 50}ms` }}
-                    onClick={() => recordReadingHistory(article.id, 'clicked')}
+                    onClick={() => {
+                      recordReadingHistory(article.id, 'clicked')
+                      posthog?.capture('for_you_article_clicked', { article_id: article.id, position: index, topics: article.topics })
+                    }}
                   >
                     <ArticleCard
                       article={article}

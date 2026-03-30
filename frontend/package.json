@@ -9,6 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@clerk/clerk-react": "^5.61.3",
+    "posthog-js": "^1.364.1",
     "react": "^18.2.0",
     "react-dom": "^18.2.0"
   },
