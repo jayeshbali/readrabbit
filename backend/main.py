@@ -519,26 +519,37 @@ async def extract_metadata(input: URLInput):
 @app.post("/api/admin/add-article-smart", dependencies=[Depends(verify_admin)])
 async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
     """Fetch URL, extract metadata with AI, generate embedding, and add to database."""
+    return await _save_article_from_url(input.url, db)
+
+
+@app.post("/api/save-article")
+async def save_article_from_extension(input: URLInput, db: Session = Depends(get_db)):
+    """Public endpoint for the Chrome extension — no token required."""
+    return await _save_article_from_url(input.url, db)
+
+
+async def _save_article_from_url(url: str, db: Session):
+    """Shared logic: fetch URL, extract metadata, generate embedding, persist."""
     from ai_service import extract_article_metadata, fetch_url_content, generate_article_embedding
-    
+
     # Check if URL already exists
-    existing = db.query(Article).filter(Article.url == input.url).first()
+    existing = db.query(Article).filter(Article.url == url).first()
     if existing:
         raise HTTPException(status_code=400, detail="Article with this URL already exists")
-    
+
     try:
         # Fetch and extract
-        html_content = await fetch_url_content(input.url)
-        metadata = await extract_article_metadata(input.url, html_content)
-        
+        html_content = await fetch_url_content(url)
+        metadata = await extract_article_metadata(url, html_content)
+
         # Generate embedding for recommendations
         embedding = await generate_article_embedding(metadata)
-        
-        # Create article
+
+        # Create article — is_saved=1 so it appears in the For You curated pool
         db_article = Article(
             id=str(uuid.uuid4()),
             title=metadata.get("title", "Untitled"),
-            url=input.url,
+            url=url,
             source=metadata.get("source"),
             author=metadata.get("author"),
             summary=metadata.get("summary"),
@@ -547,11 +558,12 @@ async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
             source_type=SourceType.MANUAL.value,
             status=ArticleStatus.UNREAD.value,
             embedding=embedding,
+            is_saved=1,
         )
         db.add(db_article)
         db.commit()
         db.refresh(db_article)
-        
+
         return {
             "success": True,
             "article": db_article.to_dict(),

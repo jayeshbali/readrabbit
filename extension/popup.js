@@ -142,7 +142,7 @@ async function saveArticle() {
   articleInfo.className = 'article-info';
   
   try {
-    const response = await fetch(`${API_BASE}/admin/add-article-smart`, {
+    const response = await fetch(`${API_BASE}/save-article`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
