@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
@@ -12,6 +12,16 @@ const emptyArticle = {
   read_time: null
 }
 
+// Admin token helpers — stored in localStorage
+function getAdminToken() {
+  return localStorage.getItem('readrabbit_admin_token') || ''
+}
+
+function authHeaders() {
+  const token = getAdminToken()
+  return token ? { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' } : { 'Content-Type': 'application/json' }
+}
+
 function AdminPage({ onBack }) {
   const [url, setUrl] = useState('')
   const [loading, setLoading] = useState(false)
@@ -20,12 +30,17 @@ function AdminPage({ onBack }) {
   const [success, setSuccess] = useState(null)
   const [articles, setArticles] = useState([])
   const [stats, setStats] = useState(null)
-  
+
+  // Admin token state
+  const [adminToken, setAdminToken] = useState(getAdminToken())
+  const [showTokenInput, setShowTokenInput] = useState(!getAdminToken())
+  const [evalStats, setEvalStats] = useState(null)
+
   // Toggle between AI, Manual, and Discover mode
   const [addMode, setAddMode] = useState('discover') // 'ai' | 'manual' | 'discover'
   const [manualForm, setManualForm] = useState(emptyArticle)
 
-  // Discovery state
+  // Discovery state — now uses async suggest endpoint
   const [discoverMode, setDiscoverMode] = useState('auto') // 'auto' | 'topic' | 'source' | 'similar'
   const [discoverInput, setDiscoverInput] = useState('')
   const [selectedArticleId, setSelectedArticleId] = useState('')
@@ -34,15 +49,33 @@ function AdminPage({ onBack }) {
   const [libraryClusters, setLibraryClusters] = useState([])
   const [approving, setApproving] = useState({}) // Track which URLs are being approved
 
+  // Async suggest job state
+  const [suggestJobId, setSuggestJobId] = useState(null)
+  const [suggestJobStatus, setSuggestJobStatus] = useState(null) // 'pending' | 'complete' | 'failed'
+  const pollRef = useRef(null)
+
   // Fetch stats and articles on mount
   useEffect(() => {
-    fetchStats()
-    fetchArticles()
-  }, [])
+    if (adminToken) {
+      fetchStats()
+      fetchArticles()
+      fetchEvalStats()
+    }
+  }, [adminToken])
+
+  // Cleanup poll on unmount
+  useEffect(() => () => { if (pollRef.current) clearInterval(pollRef.current) }, [])
+
+  const saveToken = (token) => {
+    localStorage.setItem('readrabbit_admin_token', token)
+    setAdminToken(token)
+    setShowTokenInput(false)
+  }
 
   const fetchStats = async () => {
     try {
-      const res = await fetch(`${API_BASE}/admin/stats`)
+      const res = await fetch(`${API_BASE}/admin/stats`, { headers: authHeaders() })
+      if (res.status === 403) { setShowTokenInput(true); return }
       const data = await res.json()
       setStats(data)
     } catch (err) {
@@ -50,9 +83,20 @@ function AdminPage({ onBack }) {
     }
   }
 
+  const fetchEvalStats = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/admin/eval`, { headers: authHeaders() })
+      if (!res.ok) return
+      const data = await res.json()
+      setEvalStats(data)
+    } catch (err) {
+      console.error('Failed to fetch eval stats:', err)
+    }
+  }
+
   const fetchArticles = async () => {
     try {
-      const res = await fetch(`${API_BASE}/articles?limit=100`)
+      const res = await fetch(`${API_BASE}/articles?limit=100`, { headers: authHeaders() })
       const data = await res.json()
       setArticles(data.articles || [])
     } catch (err) {
@@ -62,15 +106,15 @@ function AdminPage({ onBack }) {
 
   const handleExtract = async () => {
     if (!url.trim()) return
-    
+
     setLoading(true)
     setError(null)
     setPreview(null)
-    
+
     try {
       const res = await fetch(`${API_BASE}/admin/extract-metadata`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ url: url.trim() })
       })
       
@@ -90,14 +134,14 @@ function AdminPage({ onBack }) {
 
   const handleSave = async () => {
     if (!preview) return
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
       const res = await fetch(`${API_BASE}/articles`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify(preview)
       })
       
@@ -123,28 +167,29 @@ function AdminPage({ onBack }) {
 
   const handleQuickAdd = async () => {
     if (!url.trim()) return
-    
+
     setLoading(true)
     setError(null)
-    
+
     try {
-      const res = await fetch(`${API_BASE}/admin/add-article-smart`, {
+      // Use /api/admin/manual-add — generates embedding + adds to curated pool (is_saved=1)
+      const res = await fetch(`${API_BASE}/admin/manual-add`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ url: url.trim() })
       })
-      
+
       const data = await res.json()
-      
+
       if (!res.ok) {
         throw new Error(data.detail || 'Failed to add article')
       }
-      
-      setSuccess(`Added: ${data.article.title}`)
+
+      setSuccess(`Added to pool: ${data.article?.title || url}`)
       setUrl('')
       fetchStats()
       fetchArticles()
-      
+
       setTimeout(() => setSuccess(null), 3000)
     } catch (err) {
       setError(err.message)
@@ -165,7 +210,7 @@ function AdminPage({ onBack }) {
     try {
       const res = await fetch(`${API_BASE}/articles`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({
           ...manualForm,
           topics: manualForm.topics,
@@ -197,7 +242,8 @@ function AdminPage({ onBack }) {
     
     try {
       const res = await fetch(`${API_BASE}/articles/${articleId}`, {
-        method: 'DELETE'
+        method: 'DELETE',
+        headers: authHeaders()
       })
       
       if (!res.ok) {
@@ -211,62 +257,87 @@ function AdminPage({ onBack }) {
     }
   }
 
-  // Discovery functions
+  // Discovery functions — uses async suggest endpoint with polling
   const handleDiscover = async () => {
     setLoading(true)
     setError(null)
     setCandidates([])
     setDiscoverContext('')
-    
+    setSuggestJobId(null)
+    setSuggestJobStatus('pending')
+    if (pollRef.current) clearInterval(pollRef.current)
+
+    // Build context string from discover mode inputs
+    let contextText = ''
+    if (discoverMode === 'topic') {
+      if (!discoverInput.trim()) { setError('Please enter a topic'); setLoading(false); return }
+      contextText = `Find high-quality articles about: ${discoverInput.trim()}`
+    } else if (discoverMode === 'source') {
+      if (!discoverInput.trim()) { setError('Please enter an author or source'); setLoading(false); return }
+      contextText = `Find articles by or similar to: ${discoverInput.trim()}`
+    } else if (discoverMode === 'similar') {
+      if (!selectedArticleId) { setError('Please select an article'); setLoading(false); return }
+      const article = articles.find(a => a.id === selectedArticleId)
+      contextText = article ? `Find articles similar to: ${article.title}` : ''
+    }
+
     try {
-      const body = {
-        mode: discoverMode,
-        count: 5,
-        match_library_style: true
-      }
-      
-      if (discoverMode === 'topic') {
-        if (!discoverInput.trim()) {
-          setError('Please enter a topic')
-          setLoading(false)
-          return
-        }
-        body.topic = discoverInput.trim()
-      } else if (discoverMode === 'source') {
-        if (!discoverInput.trim()) {
-          setError('Please enter an author or source name')
-          setLoading(false)
-          return
-        }
-        body.source = discoverInput.trim()
-      } else if (discoverMode === 'similar') {
-        if (!selectedArticleId) {
-          setError('Please select an article')
-          setLoading(false)
-          return
-        }
-        body.similar_to = selectedArticleId
-      }
-      
-      const res = await fetch(`${API_BASE}/admin/candidates`, {
+      const res = await fetch(`${API_BASE}/admin/suggest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        headers: authHeaders(),
+        body: JSON.stringify({ context: contextText || null, count: 5 })
       })
-      
       const data = await res.json()
-      
-      if (!res.ok) {
-        throw new Error(data.detail || 'Failed to discover articles')
-      }
-      
-      setCandidates(data.candidates || [])
-      setDiscoverContext(data.context || '')
-      setLibraryClusters(data.library_stats?.clusters || [])
+      if (!res.ok) throw new Error(data.detail || 'Failed to start discovery job')
+
+      const jobId = data.job_id
+      setSuggestJobId(jobId)
+
+      // Poll for results every 3 seconds, max 60 ticks (~3 minutes)
+      let pollCount = 0
+      const MAX_POLL = 60
+      pollRef.current = setInterval(async () => {
+        pollCount++
+        if (pollCount > MAX_POLL) {
+          clearInterval(pollRef.current)
+          setSuggestJobStatus('failed')
+          setError('Discovery timed out after 3 minutes. The AI job may still be running — try refreshing.')
+          setLoading(false)
+          return
+        }
+        try {
+          const poll = await fetch(`${API_BASE}/admin/suggest/${jobId}`, { headers: authHeaders() })
+          if (poll.status === 404) {
+            clearInterval(pollRef.current)
+            setSuggestJobStatus('failed')
+            setError('Job expired — server may have restarted. Try again.')
+            setLoading(false)
+            return
+          }
+          const pollData = await poll.json()
+          setSuggestJobStatus(pollData.status)
+          if (pollData.status === 'complete') {
+            clearInterval(pollRef.current)
+            setCandidates(pollData.results || [])
+            setDiscoverContext(pollData.results?.length
+              ? `Found ${pollData.results.length} article suggestions`
+              : 'No suggestions found. Try a different query.')
+            setLoading(false)
+          } else if (pollData.status === 'failed') {
+            clearInterval(pollRef.current)
+            setError(pollData.error || 'Discovery failed')
+            setLoading(false)
+          }
+        } catch (e) {
+          clearInterval(pollRef.current)
+          setError('Polling error: ' + e.message)
+          setLoading(false)
+        }
+      }, 3000)
     } catch (err) {
       setError(err.message)
-    } finally {
       setLoading(false)
+      setSuggestJobStatus(null)
     }
   }
 
@@ -277,7 +348,7 @@ function AdminPage({ onBack }) {
     try {
       const res = await fetch(`${API_BASE}/admin/candidates/approve`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders(),
         body: JSON.stringify({ url: candidateUrl })
       })
       
@@ -326,7 +397,7 @@ function AdminPage({ onBack }) {
             
             {stats && (
               <div className="flex items-center gap-2 sm:gap-4 text-xs sm:text-sm text-gray-600">
-                <span><strong>{stats.total}</strong> articles</span>
+                <span><strong>{stats.total_articles}</strong> articles</span>
               </div>
             )}
           </div>
@@ -344,6 +415,58 @@ function AdminPage({ onBack }) {
         {error && (
           <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm">
             {error}
+          </div>
+        )}
+
+        {/* Admin Token Input */}
+        {showTokenInput && (
+          <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-4 sm:p-5">
+            <div className="flex items-start gap-3">
+              <span className="text-yellow-600 text-lg">🔑</span>
+              <div className="flex-1 space-y-3">
+                <div>
+                  <p className="text-sm font-medium text-yellow-800">Admin token required</p>
+                  <p className="text-xs text-yellow-600 mt-0.5">Enter your ADMIN_TOKEN to use protected endpoints.</p>
+                </div>
+                <div className="flex gap-2">
+                  <input
+                    type="password"
+                    value={adminToken}
+                    onChange={(e) => setAdminToken(e.target.value)}
+                    placeholder="Paste admin token..."
+                    className="flex-1 px-3 py-2 border border-yellow-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-yellow-400 bg-white"
+                    onKeyDown={(e) => e.key === 'Enter' && saveToken(adminToken)}
+                  />
+                  <button
+                    onClick={() => saveToken(adminToken)}
+                    disabled={!adminToken.trim()}
+                    className="px-4 py-2 bg-yellow-500 text-white text-sm font-medium rounded-lg hover:bg-yellow-600 disabled:opacity-50 transition-colors"
+                  >
+                    Save
+                  </button>
+                </div>
+              </div>
+              {getAdminToken() && (
+                <button
+                  onClick={() => setShowTokenInput(false)}
+                  className="text-yellow-500 hover:text-yellow-700 text-lg leading-none"
+                >
+                  ×
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Token management (when token is set) */}
+        {!showTokenInput && adminToken && (
+          <div className="flex justify-end">
+            <button
+              onClick={() => setShowTokenInput(true)}
+              className="text-xs text-gray-400 hover:text-gray-600"
+            >
+              🔑 Change admin token
+            </button>
           </div>
         )}
 
@@ -495,6 +618,19 @@ function AdminPage({ onBack }) {
                   'Find Articles'
                 )}
               </button>
+
+              {/* Polling status indicator */}
+              {loading && suggestJobId && (
+                <div className="flex items-center justify-center gap-2 text-xs text-gray-500">
+                  <svg className="animate-spin h-3 w-3 text-orange-500" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                  </svg>
+                  <span>
+                    {suggestJobStatus === 'pending' ? 'AI is searching the web...' : `Status: ${suggestJobStatus}`}
+                  </span>
+                </div>
+              )}
 
               {/* Context Message */}
               {discoverContext && (
@@ -832,12 +968,25 @@ function AdminPage({ onBack }) {
                       </>
                     )}
                     <span className={`text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${
-                      article.source_type === 'AI Suggested' 
-                        ? 'bg-purple-100 text-purple-700' 
+                      article.source_type === 'AI Suggested'
+                        ? 'bg-purple-100 text-purple-700'
                         : 'bg-gray-200 text-gray-600'
                     }`}>
                       {article.source_type === 'AI Suggested' ? 'AI' : 'Manual'}
                     </span>
+                    {article.groq_quality_score != null ? (
+                      <span className={`text-xs px-1.5 sm:px-2 py-0.5 rounded-full ${
+                        article.groq_quality_score >= 0.8
+                          ? 'bg-green-100 text-green-700'
+                          : article.groq_quality_score >= 0.5
+                          ? 'bg-yellow-100 text-yellow-700'
+                          : 'bg-red-100 text-red-600'
+                      }`}>
+                        Q:{Math.round(article.groq_quality_score * 100)}
+                      </span>
+                    ) : (
+                      <span className="text-xs text-gray-300">Q:—</span>
+                    )}
                   </div>
                 </div>
                 <button
@@ -856,6 +1005,34 @@ function AdminPage({ onBack }) {
             )}
           </div>
         </div>
+
+        {/* Eval Dashboard */}
+        {evalStats && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+            <h2 className="text-base sm:text-lg font-semibold text-gray-900 mb-4">📊 Eval Dashboard</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-gray-900">{evalStats.reading_history_total}</div>
+                <div className="text-xs text-gray-500 mt-1">Reading Events</div>
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3 text-center">
+                <div className="text-2xl font-bold text-gray-900">{evalStats.total_eval_events}</div>
+                <div className="text-xs text-gray-500 mt-1">Eval Events</div>
+              </div>
+              {Object.entries(evalStats.by_event_type || {}).map(([type, count]) => (
+                <div key={type} className="bg-gray-50 rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-orange-600">{count}</div>
+                  <div className="text-xs text-gray-500 mt-1">{type.replace(/_/g, ' ')}</div>
+                </div>
+              ))}
+              {Object.keys(evalStats.by_event_type || {}).length === 0 && (
+                <div className="col-span-2 text-center py-2 text-xs text-gray-400">
+                  No eval events yet — they appear as users interact with For You tab
+                </div>
+              )}
+            </div>
+          </div>
+        )}
       </main>
     </div>
   )

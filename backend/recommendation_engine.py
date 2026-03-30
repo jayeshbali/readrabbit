@@ -228,26 +228,64 @@ class UserProfile:
 
 def build_user_profile(
     saved_articles: List[Dict],
-    dismissed_articles: List[Dict] = None
+    dismissed_articles: List[Dict] = None,
+    reading_history: List[Dict] = None,
+    weight_map: Dict[str, float] = None
 ) -> UserProfile:
-    """Build a user profile from their saved and dismissed articles."""
+    """Build a user profile from saved/dismissed articles and reading history.
+
+    reading_history: list of dicts with keys: article_id, action, embedding
+      actions: 'clicked' (weight 1.0), 'viewed' (weight 0.5), 'dismissed' (excluded from positive signal)
+    weight_map: override default action weights, e.g. {'clicked': 1.0, 'saved': 2.0, 'dismissed': -1.0}
+    Backward compatible: old callers (saved_articles, dismissed_articles) work unchanged.
+    """
     dismissed_articles = dismissed_articles or []
-    
-    clusters = build_interest_clusters(saved_articles)
-    
+    reading_history = reading_history or []
+    default_weights = {"clicked": 1.0, "viewed": 0.5, "saved": 2.0, "dismissed": -1.0}
+    if weight_map:
+        default_weights.update(weight_map)
+
+    # Merge reading history positive signals into saved_articles for cluster building
+    history_positives = []
+    history_dismissed_embeddings = []
+    seen_ids = {a.get("id") for a in saved_articles if a.get("id")}
+    for entry in reading_history:
+        action = entry.get("action", "")
+        article_id = entry.get("article_id")
+        embedding = entry.get("embedding")
+        weight = default_weights.get(action, 0.0)
+        if weight < 0:
+            if embedding:
+                history_dismissed_embeddings.append(embedding)
+        elif weight > 0 and article_id and article_id not in seen_ids:
+            if embedding:
+                history_positives.append({
+                    "id": article_id,
+                    "embedding": embedding,
+                    "topics": entry.get("topics") or [],
+                    "_history_weight": weight,
+                })
+                seen_ids.add(article_id)
+
+    all_positive = saved_articles + history_positives
+    clusters = build_interest_clusters(all_positive)
+
     dismissed_embeddings = [
-        a.get("embedding") for a in dismissed_articles 
-        if a.get("embedding")
-    ]
-    
+        a.get("embedding") for a in dismissed_articles if a.get("embedding")
+    ] + history_dismissed_embeddings
+
     topic_counts = defaultdict(int)
-    for article in saved_articles:
+    for article in all_positive:
         for topic in (article.get("topics") or []):
             topic_counts[topic] += 1
-    
+
     saved_ids = {a.get("id") for a in saved_articles if a.get("id")}
     dismissed_ids = {a.get("id") for a in dismissed_articles if a.get("id")}
-    
+    # Also exclude history-dismissed articles from recommendations
+    for entry in reading_history:
+        if default_weights.get(entry.get("action", ""), 0.0) < 0 and entry.get("article_id"):
+            dismissed_ids.add(entry["article_id"])
+
     return UserProfile(
         clusters=clusters,
         dismissed_embeddings=dismissed_embeddings,

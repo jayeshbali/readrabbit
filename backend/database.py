@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, String, Integer, Text, DateTime, ForeignKey, Enum, ARRAY, Float
+from sqlalchemy import create_engine, Column, String, Integer, Text, DateTime, ForeignKey, Enum, ARRAY, Float, JSON
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -62,6 +62,9 @@ class Article(Base):
     # User explicitly saved this article (bookmarked in UI)
     is_saved = Column(Integer, default=0)  # 0=not saved, 1=saved
 
+    # Phase 3A: Groq LLM quality score (0.0–1.0), populated during enrichment
+    groq_quality_score = Column(Float, nullable=True)
+
     # Relationship to saved articles
     saved_by = relationship("SavedArticle", back_populates="article")
 
@@ -79,6 +82,7 @@ class Article(Base):
             "status": self.status,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "has_embedding": self.embedding is not None,
+            "groq_quality_score": self.groq_quality_score,
         }
 
 
@@ -92,7 +96,6 @@ class User(Base):
 
     # Relationships
     saved_articles = relationship("SavedArticle", back_populates="user")
-    reading_history = relationship("ReadingHistory", back_populates="user")
 
 
 class SavedArticle(Base):
@@ -113,13 +116,24 @@ class ReadingHistory(Base):
     __tablename__ = "reading_history"
 
     id = Column(String, primary_key=True)
-    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    # FK dropped in Phase 3B migration — stores anonymous localStorage UUIDs
+    # that have no corresponding row in the users table
+    user_id = Column(String, nullable=True)
     article_id = Column(String, ForeignKey("articles.id"), nullable=False)
     action = Column(String(50))  # 'viewed', 'clicked', 'dismissed'
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relationships
-    user = relationship("User", back_populates="reading_history")
+
+class EvalEvent(Base):
+    """Phase 3C: tracks AI suggestion acceptance, For You CTR, domain diversity."""
+    __tablename__ = "eval_events"
+
+    id = Column(String, primary_key=True)
+    event_type = Column(String(100), nullable=False)  # 'suggest_accepted', 'for_you_click', etc.
+    article_id = Column(String, ForeignKey("articles.id", ondelete="SET NULL"), nullable=True)
+    user_id = Column(String, nullable=True)  # anonymous localStorage UUID
+    event_metadata = Column("metadata", JSON, nullable=True)   # flexible payload per event type
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 
 def get_db():

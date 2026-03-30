@@ -1,8 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 import random
 import os
@@ -10,7 +11,7 @@ import uuid
 from contextlib import asynccontextmanager
 
 # Database imports
-from database import get_db, init_db, Article, SourceType, ArticleStatus, SessionLocal
+from database import get_db, init_db, Article, SourceType, ArticleStatus, SessionLocal, ReadingHistory, EvalEvent
 
 # Check if database is configured
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -87,6 +88,26 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ============== Admin Auth ==============
+
+_http_bearer = HTTPBearer(auto_error=False)
+
+def verify_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(_http_bearer)):
+    """Verify ADMIN_TOKEN for all /api/admin/* routes."""
+    token = os.getenv("ADMIN_TOKEN", "")
+    if not token or creds is None or creds.credentials != token:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+# ============== AI Suggest Job Store ==============
+# Ephemeral by design — jobs are in-memory for the lifetime of the process.
+# If Render restarts mid-job, the frontend gets a 404 on poll and re-triggers.
+# Dict shape: { job_id: { "status": "pending"|"complete"|"failed",
+#                          "results": [...] | None,
+#                          "error": str | None } }
+_suggest_jobs: dict = {}
 
 
 # ============== Pydantic Models ==============
@@ -401,7 +422,7 @@ def reset_shown():
 
 # ============== Admin Endpoints ==============
 
-@app.get("/api/admin/stats")
+@app.get("/api/admin/stats", dependencies=[Depends(verify_admin)])
 def get_stats(db: Session = Depends(get_db)):
     """Get database statistics."""
     total = db.query(Article).count()
@@ -420,13 +441,30 @@ def get_stats(db: Session = Depends(get_db)):
     }
 
 
+@app.get("/api/admin/eval", dependencies=[Depends(verify_admin)])
+def get_eval_stats(db: Session = Depends(get_db)):
+    """Phase 3C: Return eval event counts by type."""
+    by_type = db.query(
+        EvalEvent.event_type, func.count(EvalEvent.id)
+    ).group_by(EvalEvent.event_type).all()
+
+    total = db.query(EvalEvent).count()
+    reading_history_total = db.query(ReadingHistory).count()
+
+    return {
+        "total_eval_events": total,
+        "by_event_type": {et: c for et, c in by_type},
+        "reading_history_total": reading_history_total,
+    }
+
+
 # ============== AI-Powered Endpoints ==============
 
 class URLInput(BaseModel):
     url: str
 
 
-@app.post("/api/admin/extract-metadata")
+@app.post("/api/admin/extract-metadata", dependencies=[Depends(verify_admin)])
 async def extract_metadata(input: URLInput):
     """Extract article metadata from a URL using AI."""
     from ai_service import extract_article_metadata, fetch_url_content
@@ -447,7 +485,7 @@ async def extract_metadata(input: URLInput):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/api/admin/add-article-smart")
+@app.post("/api/admin/add-article-smart", dependencies=[Depends(verify_admin)])
 async def add_article_smart(input: URLInput, db: Session = Depends(get_db)):
     """Fetch URL, extract metadata with AI, generate embedding, and add to database."""
     from ai_service import extract_article_metadata, fetch_url_content, generate_article_embedding
@@ -503,7 +541,7 @@ class CandidateRequest(BaseModel):
     match_library_style: bool = True  # Score against existing library
 
 
-@app.post("/api/admin/candidates")
+@app.post("/api/admin/candidates", dependencies=[Depends(verify_admin)])
 async def get_candidates(
     request: CandidateRequest,
     db: Session = Depends(get_db)
@@ -777,7 +815,7 @@ async def get_candidates(
     }
 
 
-@app.post("/api/admin/candidates/approve")
+@app.post("/api/admin/candidates/approve", dependencies=[Depends(verify_admin)])
 async def approve_candidate(
     input: URLInput,
     db: Session = Depends(get_db)
@@ -832,6 +870,126 @@ async def approve_candidate(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ============== Phase 3A: Curated Pool Management ==============
+
+@app.post("/api/admin/manual-add", dependencies=[Depends(verify_admin)])
+async def manual_add_to_pool(
+    input: URLInput,
+    db: Session = Depends(get_db)
+):
+    """
+    Manually add a URL to the curated article pool.
+    Fetches metadata + embedding, then saves to the articles table.
+    """
+    from ai_service import extract_article_metadata, fetch_url_content, generate_article_embedding
+
+    existing = db.query(Article).filter(Article.url == input.url).first()
+    if existing:
+        return {"success": False, "message": "Article already in pool", "article": existing.to_dict()}
+
+    try:
+        html_content = await fetch_url_content(input.url)
+        metadata = await extract_article_metadata(input.url, html_content)
+        embedding = await generate_article_embedding(metadata)
+
+        db_article = Article(
+            id=str(uuid.uuid4()),
+            title=metadata.get("title", "Untitled"),
+            url=input.url,
+            source=metadata.get("source"),
+            author=metadata.get("author"),
+            summary=metadata.get("summary"),
+            topics=metadata.get("topics", []),
+            read_time=metadata.get("read_time"),
+            source_type=SourceType.MANUAL.value,
+            status=ArticleStatus.UNREAD.value,
+            embedding=embedding,
+            is_saved=1,  # Mark as curated pool member so it appears in For You feed
+        )
+        db.add(db_article)
+        db.commit()
+        db.refresh(db_article)
+
+        return {"success": True, "message": "Article added to pool", "article": db_article.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class SuggestInput(BaseModel):
+    context: Optional[str] = None  # optional hint to steer suggestions (topic, theme)
+    count: Optional[int] = Field(5, ge=1, le=50)  # cap to prevent runaway AI jobs
+
+
+async def _run_suggest_job(job_id: str, context: Optional[str], count: int):
+    """Background task: run AI discovery and store results in _suggest_jobs."""
+    from discovery_agent import run_discovery_agent
+    from database import SessionLocal
+
+    try:
+        db = SessionLocal()
+        try:
+            existing_urls = [a.url for a in db.query(Article.url).all()]
+        finally:
+            db.close()
+    except Exception as e:
+        _suggest_jobs[job_id] = {"status": "failed", "results": None, "error": f"DB error: {e}"}
+        return
+
+    try:
+        input_content = context or "Find high-quality articles worth reading and curating"
+        result = await run_discovery_agent(
+            input_content=input_content,
+            input_type="text",
+            max_results=count,
+            existing_urls=existing_urls,
+        )
+        _suggest_jobs[job_id] = {
+            "status": "complete",
+            "results": result.get("recommendations", []),
+            "error": None,
+        }
+    except Exception as e:
+        _suggest_jobs[job_id] = {
+            "status": "failed",
+            "results": None,
+            "error": str(e),
+        }
+
+
+@app.post("/api/admin/suggest", dependencies=[Depends(verify_admin)])
+async def start_suggest_job(
+    input: SuggestInput,
+    background_tasks: BackgroundTasks,
+):
+    """
+    Start an async AI Suggest job. Returns a job_id immediately.
+    Poll GET /api/admin/suggest/{job_id} for results.
+    Jobs are in-memory — a Render restart clears them; just re-trigger.
+    """
+    # Evict oldest jobs if dict grows large (process restart is the normal GC mechanism)
+    if len(_suggest_jobs) > 100:
+        oldest = next(iter(_suggest_jobs))
+        del _suggest_jobs[oldest]
+
+    job_id = str(uuid.uuid4())
+    _suggest_jobs[job_id] = {"status": "pending", "results": None, "error": None}
+    background_tasks.add_task(_run_suggest_job, job_id, input.context, input.count)
+    return {"job_id": job_id, "status": "pending"}
+
+
+@app.get("/api/admin/suggest/{job_id}", dependencies=[Depends(verify_admin)])
+def poll_suggest_job(job_id: str):
+    """
+    Poll the status of an AI Suggest job.
+    Returns {status: 'pending'|'complete'|'failed', results: [...], error: str|None}.
+    Returns 404 if the job_id is unknown (process restarted — re-trigger).
+    """
+    job = _suggest_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Job not found — process may have restarted. Re-trigger.")
+    return job
+
+
 def extract_source_name(url: str) -> str:
     """Extract readable source name from URL."""
     try:
@@ -867,23 +1025,54 @@ def extract_source_name(url: str) -> str:
 
 # ============== Database Migration Endpoints ==============
 
-@app.post("/api/admin/migrate-db")
+@app.post("/api/admin/migrate-db", dependencies=[Depends(verify_admin)])
 def migrate_database(db: Session = Depends(get_db)):
     """
-    Run database migrations to add new columns.
-    Safe to run multiple times - uses IF NOT EXISTS.
+    Run database migrations to add new columns/tables.
+    Safe to run multiple times - uses IF NOT EXISTS guards throughout.
     """
     try:
-        # Add embedding column if it doesn't exist
+        # Phase 1: embedding column
         db.execute(text("""
-            ALTER TABLE articles 
+            ALTER TABLE articles
             ADD COLUMN IF NOT EXISTS embedding FLOAT[]
         """))
+
+        # Phase 3A: groq quality score on articles
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS groq_quality_score FLOAT
+        """))
+
+        # Phase 3B: drop FK constraint on reading_history.user_id so anonymous
+        # UUIDs (no users row) can be stored without a FK violation
+        db.execute(text("""
+            ALTER TABLE reading_history
+            DROP CONSTRAINT IF EXISTS reading_history_user_id_fkey
+        """))
+        db.execute(text("""
+            ALTER TABLE reading_history
+            ALTER COLUMN user_id DROP NOT NULL
+        """))
+
+        # Phase 3C: eval_events table for tracking AI suggestion acceptance,
+        # For You CTR, domain diversity, and Groq quality score distribution
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS eval_events (
+                id VARCHAR PRIMARY KEY,
+                event_type VARCHAR(100) NOT NULL,
+                article_id VARCHAR REFERENCES articles(id) ON DELETE SET NULL,
+                user_id VARCHAR,
+                metadata JSONB,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+
         db.commit()
-        
+
         return {
             "success": True,
-            "message": "Migration completed - embedding column added"
+            "message": "Migrations completed: groq_quality_score column, reading_history FK removed, eval_events table created"
         }
     except Exception as e:
         db.rollback()
@@ -895,7 +1084,7 @@ def migrate_database(db: Session = Depends(get_db)):
 
 # ============== Embedding Management Endpoints ==============
 
-@app.get("/api/admin/embedding-status")
+@app.get("/api/admin/embedding-status", dependencies=[Depends(verify_admin)])
 def get_embedding_status(db: Session = Depends(get_db)):
     """Check how many articles have embeddings."""
     total = db.query(Article).count()
@@ -920,7 +1109,7 @@ def get_embedding_status(db: Session = Depends(get_db)):
     }
 
 
-@app.post("/api/admin/test-embedding")
+@app.post("/api/admin/test-embedding", dependencies=[Depends(verify_admin)])
 async def test_embedding():
     """Test embedding generation with a sample text."""
     from ai_service import (
@@ -989,7 +1178,7 @@ async def test_embedding():
     return results
 
 
-@app.post("/api/admin/enhance-summaries")
+@app.post("/api/admin/enhance-summaries", dependencies=[Depends(verify_admin)])
 async def enhance_summaries(
     limit: int = 5,
     db: Session = Depends(get_db)
@@ -1057,7 +1246,7 @@ async def enhance_summaries(
     }
 
 
-@app.post("/api/admin/generate-embeddings")
+@app.post("/api/admin/generate-embeddings", dependencies=[Depends(verify_admin)])
 async def generate_embeddings(
     limit: int = 10,
     db: Session = Depends(get_db)
@@ -1127,7 +1316,7 @@ async def generate_embeddings(
     }
 
 
-@app.post("/api/admin/backfill-all")
+@app.post("/api/admin/backfill-all", dependencies=[Depends(verify_admin)])
 async def backfill_all(db: Session = Depends(get_db)):
     """
     Backfill all articles: enhance summaries then generate embeddings.
@@ -1405,134 +1594,172 @@ async def get_similar_articles_endpoint(
     }
 
 
+class ForYouBody(BaseModel):
+    user_id: Optional[str] = None
+    count: Optional[int] = Field(4, ge=1, le=50)
+
+
 @app.post("/api/recommendations/for-you")
 async def get_for_you_recommendations(
-    count: int = 4,
+    body: ForYouBody,
     db: Session = Depends(get_db)
 ):
     """
-    Get "For You" recommendations - the main discovery feature.
-    
-    This endpoint:
-    1. Builds user profile from reading history
-    2. Searches for new articles matching interests (via web search)
-    3. Filters out research papers
-    4. Returns mix of on-topic + serendipity
+    Get "For You" recommendations from the curated article pool.
+
+    Phase 3B: replaced web-search approach with curated pool retrieval.
+    - Cold start (<5 ReadingHistory rows for user): returns full pool, cold_start=True
+    - Normal path: scores pool articles against user profile built from reading history
+    - Pool empty: returns [], message about empty pool
+    - No embeddings in pool: random order fallback
     """
-    from recommendation_engine import (
-        build_user_profile,
-        extract_user_interests,
-        is_research_paper,
-        get_recommendations
+    from recommendation_engine import build_user_profile, get_recommendations
+
+    user_id = body.user_id
+    count = body.count or 4
+
+    # Curated pool: articles approved by admin (is_saved=1 or source_type=AI_Suggested with status=Unread)
+    pool_articles = db.query(Article).filter(
+        Article.is_saved == 1,
+        Article.status != ArticleStatus.DISMISSED.value,
+    ).all()
+
+    if not pool_articles:
+        return {
+            "recommendations": [],
+            "cold_start": False,
+            "message": "No articles in curated pool yet — check back after an admin approves some articles.",
+        }
+
+    # Load reading history for this user
+    reading_history_rows = []
+    if user_id:
+        reading_history_rows = db.query(ReadingHistory).filter(
+            ReadingHistory.user_id == user_id
+        ).all()
+
+    cold_start = len(reading_history_rows) < 5
+
+    if cold_start:
+        # Return up to `count` pool articles, random order
+        pool_dicts = [a.to_dict() for a in pool_articles]
+        random.shuffle(pool_dicts)
+        for d in pool_dicts:
+            d.pop("embedding", None)
+        return {
+            "recommendations": pool_dicts[:count],
+            "cold_start": True,
+            "message": "Read a few more articles so we can personalise your feed.",
+        }
+
+    # Build a lookup of article embeddings for history entries (scoped to history IDs only)
+    pool_by_id = {a.id: a for a in pool_articles}
+    history_article_ids = [rh.article_id for rh in reading_history_rows]
+    history_articles = db.query(Article).filter(
+        Article.id.in_(history_article_ids),
+        Article.embedding.isnot(None),
+    ).all() if history_article_ids else []
+    embedding_by_id = {a.id: a.embedding for a in history_articles}
+
+    history_dicts = [
+        {
+            "article_id": rh.article_id,
+            "action": rh.action,
+            "embedding": embedding_by_id.get(rh.article_id),
+            "topics": pool_by_id[rh.article_id].topics if rh.article_id in pool_by_id else [],
+        }
+        for rh in reading_history_rows
+    ]
+
+    # Build user profile from reading history (no saved/dismissed in this flow)
+    user_profile = build_user_profile(
+        saved_articles=[],
+        dismissed_articles=[],
+        reading_history=history_dicts,
+        weight_map={"clicked": 1.0, "viewed": 0.5, "saved": 2.0, "dismissed": -1.0},
     )
-    from discovery_agent import search_articles
-    from ai_service import generate_article_embedding
-    
-    # Build user profile
-    saved_articles = db.query(Article).filter(
-        Article.status != ArticleStatus.DISMISSED.value
-    ).all()
-    
-    dismissed_articles = db.query(Article).filter(
-        Article.status == ArticleStatus.DISMISSED.value
-    ).all()
-    
-    saved_dicts = [
+
+    # Exclude already-seen articles from candidates
+    seen_ids = {rh.article_id for rh in reading_history_rows}
+    candidate_dicts = [
         {
             "id": a.id,
+            "title": a.title,
+            "url": a.url,
+            "source": a.source,
+            "author": a.author,
+            "summary": a.summary,
             "topics": a.topics or [],
-            "embedding": a.embedding
+            "read_time": a.read_time,
+            "source_type": a.source_type,
+            "status": a.status,
+            "embedding": a.embedding,
+            "groq_quality_score": a.groq_quality_score,
         }
-        for a in saved_articles
+        for a in pool_articles if a.id not in seen_ids
     ]
-    
-    dismissed_dicts = [
-        {"id": a.id, "embedding": a.embedding}
-        for a in dismissed_articles
-    ]
-    
-    user_profile = build_user_profile(saved_dicts, dismissed_dicts)
-    interests = extract_user_interests(user_profile)
-    
-    if not interests:
-        # No profile yet - return from existing library
-        existing = db.query(Article).filter(
-            Article.status == ArticleStatus.UNREAD.value,
-            Article.embedding != None
-        ).limit(count).all()
-        
+
+    if not candidate_dicts:
         return {
-            "recommendations": [a.to_dict() for a in existing],
-            "source": "library",
-            "message": "Save more articles to get personalized recommendations"
+            "recommendations": [],
+            "cold_start": False,
+            "message": "You've seen all articles in the pool — check back soon.",
         }
-    
-    # Get existing URLs to avoid duplicates
-    existing_urls = [a.url for a in db.query(Article.url).all()]
-    
-    # Search for new articles based on interests
-    search_queries = [
-        f"{interests[0]} articles essays",
-        f"{interests[1] if len(interests) > 1 else interests[0]} blog post",
-    ]
-    
-    discovered = []
-    for query in search_queries[:2]:
-        try:
-            results = await search_articles(query, max_results=5)
-            for r in results:
-                # Skip if already exists or is research paper
-                if r.get("url") in existing_urls:
-                    continue
-                if is_research_paper(r.get("url", ""), r.get("source", ""), r.get("title", "")):
-                    continue
-                discovered.append(r)
-        except Exception as e:
-            print(f"Search error: {e}")
-    
-    # If we found new articles, generate embeddings and score them
-    if discovered:
-        for article in discovered[:count * 2]:
-            try:
-                embedding = await generate_article_embedding({
-                    "title": article.get("title", ""),
-                    "summary": article.get("summary", ""),
-                    "topics": article.get("topics", []),
-                    "source": article.get("source", "")
-                })
-                article["embedding"] = embedding
-            except:
-                pass
-        
-        # Score and rank
-        recommendations = get_recommendations(
-            user_profile=user_profile,
-            candidate_articles=discovered,
-            count=count,
-            serendipity_ratio=0.5
-        )
-        
-        # Remove embeddings from response
-        for rec in recommendations:
-            rec.pop("embedding", None)
-        
+
+    # Check if any candidates have embeddings; fall back to random if none
+    has_embeddings = any(c.get("embedding") for c in candidate_dicts)
+    if not has_embeddings:
+        random.shuffle(candidate_dicts)
+        for d in candidate_dicts:
+            d.pop("embedding", None)
         return {
-            "recommendations": recommendations,
-            "source": "web_search",
-            "interests_used": interests[:3]
+            "recommendations": candidate_dicts[:count],
+            "cold_start": False,
+            "message": "Recommendations based on pool order (embeddings not yet available).",
         }
-    
-    # Fallback to existing library
-    existing = db.query(Article).filter(
-        Article.status == ArticleStatus.UNREAD.value,
-        Article.embedding != None
-    ).limit(count).all()
-    
+
+    recommendations = get_recommendations(
+        user_profile=user_profile,
+        candidate_articles=candidate_dicts,
+        count=count,
+        serendipity_ratio=0.3,
+    )
+
+    for rec in recommendations:
+        rec.pop("embedding", None)
+
     return {
-        "recommendations": [a.to_dict() for a in existing],
-        "source": "library",
-        "interests_used": interests[:3]
+        "recommendations": recommendations,
+        "cold_start": False,
     }
+
+
+class ReadingHistoryInput(BaseModel):
+    user_id: str
+    article_id: str
+    action: str  # 'clicked', 'viewed', 'dismissed'
+
+
+@app.post("/api/reading-history")
+def record_reading_history(input: ReadingHistoryInput, db: Session = Depends(get_db)):
+    """Record a reading history event for an anonymous user (localStorage UUID)."""
+    valid_actions = {"clicked", "viewed", "dismissed"}
+    if input.action not in valid_actions:
+        raise HTTPException(status_code=422, detail=f"action must be one of {valid_actions}")
+
+    article = db.query(Article).filter(Article.id == input.article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+
+    entry = ReadingHistory(
+        id=str(uuid.uuid4()),
+        user_id=input.user_id,
+        article_id=input.article_id,
+        action=input.action,
+    )
+    db.add(entry)
+    db.commit()
+    return {"success": True}
 
 
 # ============== Discovery Agent Endpoints ==============
@@ -1725,7 +1952,7 @@ def debug_youtube(url: str):
     }
 
 
-@app.get("/api/admin/run-tests")
+@app.get("/api/admin/run-tests", dependencies=[Depends(verify_admin)])
 def run_tests():
     """Run the test suite and return results. Side project only."""
     import subprocess

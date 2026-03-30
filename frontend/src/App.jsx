@@ -5,6 +5,16 @@ import DiscoverAgent from './components/DiscoverAgent'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
+// Get or create anonymous user UUID (persists in localStorage)
+function getOrCreateUserId() {
+  let id = localStorage.getItem('readrabbit_user_id')
+  if (!id) {
+    id = crypto.randomUUID()
+    localStorage.setItem('readrabbit_user_id', id)
+  }
+  return id
+}
+
 function App() {
   const [articles, setArticles] = useState([])
   const [savedArticles, setSavedArticles] = useState([])
@@ -12,9 +22,16 @@ function App() {
   const [error, setError] = useState(null)
   const [shuffling, setShuffling] = useState(false)
   const [serverWaking, setServerWaking] = useState(false)
-  
+
+  // For You tab state
+  const [forYouArticles, setForYouArticles] = useState([])
+  const [forYouLoading, setForYouLoading] = useState(false)
+  const [forYouColdStart, setForYouColdStart] = useState(false)
+  const [forYouMessage, setForYouMessage] = useState(null)
+  const userId = useRef(getOrCreateUserId())
+
   // UI State
-  const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'saved'
+  const [activeTab, setActiveTab] = useState('discover') // 'discover' | 'for-you' | 'saved'
   const [similarSource, setSimilarSource] = useState(null) // article that triggered "more like this"
   const [viewMode, setViewMode] = useState('feed') // 'feed' | 'single'
   const [singleIndex, setSingleIndex] = useState(0) // For single view navigation
@@ -63,6 +80,46 @@ function App() {
       setServerWaking(false)
     }
   }, [loading])
+
+  const fetchForYou = useCallback(async () => {
+    setForYouLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/recommendations/for-you`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId.current, count: 6 }),
+      })
+      if (!res.ok) throw new Error('Failed to fetch For You articles')
+      const data = await res.json()
+      setForYouArticles(data.recommendations || [])
+      setForYouColdStart(data.cold_start || false)
+      setForYouMessage(data.message || null)
+    } catch (err) {
+      console.error('For You fetch error:', err)
+    } finally {
+      setForYouLoading(false)
+    }
+  }, [])
+
+  const recordReadingHistory = useCallback(async (articleId, action = 'clicked') => {
+    try {
+      await fetch(`${API_BASE}/reading-history`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId.current, article_id: articleId, action }),
+      })
+    } catch (err) {
+      // Non-blocking — reading history is best-effort
+      console.error('Reading history error:', err)
+    }
+  }, [])
+
+  // Fetch For You articles when tab becomes active
+  useEffect(() => {
+    if (activeTab === 'for-you' && forYouArticles.length === 0) {
+      fetchForYou()
+    }
+  }, [activeTab, fetchForYou, forYouArticles.length])
 
   const fetchArticles = useCallback(async (append = false) => {
     try {
@@ -437,7 +494,7 @@ function App() {
             <div className="inline-flex bg-gray-100 rounded-full p-1">
               <button
                 onClick={() => { setActiveTab('discover'); setSimilarSource(null); }}
-                className={`px-4 sm:px-6 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
                   activeTab === 'discover'
                     ? 'bg-white text-gray-900 shadow-sm'
                     : 'text-gray-600 hover:text-gray-900'
@@ -446,8 +503,18 @@ function App() {
                 Discover
               </button>
               <button
+                onClick={() => { setActiveTab('for-you'); setSimilarSource(null); }}
+                className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
+                  activeTab === 'for-you'
+                    ? 'bg-white text-gray-900 shadow-sm'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                For You
+              </button>
+              <button
                 onClick={() => { setActiveTab('saved'); setSimilarSource(null); }}
-                className={`px-4 sm:px-6 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
+                className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
                   activeTab === 'saved'
                     ? 'bg-white text-gray-900 shadow-sm'
                     : 'text-gray-600 hover:text-gray-900'
@@ -495,6 +562,95 @@ function App() {
           </div>
         )}
 
+        {/* For You Tab */}
+        {activeTab === 'for-you' && (
+          <div>
+            {/* Cold start banner */}
+            {forYouColdStart && !forYouLoading && (
+              <div className="mb-4 sm:mb-6 bg-orange-50 border border-orange-100 rounded-xl p-4 flex items-start gap-3">
+                <span className="text-xl flex-shrink-0">🌱</span>
+                <div>
+                  <p className="text-sm font-medium text-orange-800">Your feed is warming up</p>
+                  <p className="text-xs text-orange-600 mt-0.5">
+                    {forYouMessage || 'Read a few articles to personalise this feed. We\'ll learn what you like.'}
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* Loading state */}
+            {forYouLoading && (
+              <div className="max-w-2xl mx-auto space-y-4">
+                {[1, 2, 3].map(i => (
+                  <div key={i} className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 animate-pulse">
+                    <div className="h-4 w-3/4 bg-gray-200 rounded mb-3"></div>
+                    <div className="h-3 w-full bg-gray-100 rounded mb-2"></div>
+                    <div className="h-3 w-2/3 bg-gray-100 rounded"></div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Empty state */}
+            {!forYouLoading && forYouArticles.length === 0 && (
+              <div className="text-center py-16 px-4">
+                <div className="w-20 h-20 bg-orange-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <span className="text-4xl">🐰</span>
+                </div>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">Nothing here yet</h3>
+                <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
+                  {forYouMessage || 'The curated pool is empty. Check back after the admin approves some articles.'}
+                </p>
+                <button
+                  onClick={fetchForYou}
+                  className="px-5 py-2.5 bg-orange-500 text-white text-sm font-medium rounded-xl hover:bg-orange-600 transition-colors"
+                >
+                  Refresh
+                </button>
+              </div>
+            )}
+
+            {/* Articles */}
+            {!forYouLoading && forYouArticles.length > 0 && (
+              <div className="max-w-2xl mx-auto space-y-4">
+                {forYouArticles.map((article, index) => (
+                  <div
+                    key={article.id}
+                    className="animate-fade-in"
+                    style={{ animationDelay: `${index * 50}ms` }}
+                    onClick={() => recordReadingHistory(article.id, 'clicked')}
+                  >
+                    <ArticleCard
+                      article={article}
+                      onDismiss={(id) => {
+                        recordReadingHistory(id, 'dismissed')
+                        setForYouArticles(prev => prev.filter(a => a.id !== id))
+                      }}
+                      onSave={handleSave}
+                      onSimilar={handleSimilar}
+                      isSaved={isArticleSaved(article.id)}
+                      viewMode="cards"
+                    />
+                  </div>
+                ))}
+
+                <div className="flex justify-center pt-2">
+                  <button
+                    onClick={fetchForYou}
+                    disabled={forYouLoading}
+                    className="group px-6 py-3 bg-white border border-gray-200 text-gray-700 font-medium rounded-xl hover:border-orange-300 hover:text-orange-600 disabled:opacity-50 transition-all shadow-sm hover:shadow-md flex items-center gap-2 text-sm"
+                  >
+                    <span>Refresh feed</span>
+                    <svg className="w-4 h-4 group-hover:rotate-180 transition-transform duration-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Value Prop - shown on Discover tab when not in similar mode */}
         {activeTab === 'discover' && articles.length > 0 && !similarSource && (
           <div className="text-center mb-6 sm:mb-8">
@@ -507,7 +663,7 @@ function App() {
           </div>
         )}
 
-        {activeTab === 'saved' && savedArticles.length === 0 ? (
+        {activeTab !== 'for-you' && (activeTab === 'saved' && savedArticles.length === 0 ? (
           <div className="text-center py-12 sm:py-16 px-4">
             <div className="relative inline-block mb-6">
               <div className="w-24 h-24 bg-gradient-to-br from-orange-100 to-orange-50 rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-orange-500/10">
@@ -551,7 +707,7 @@ function App() {
           /* Feed View - single column vertical stack */
           <div className="max-w-2xl mx-auto space-y-4">
             {displayArticles.map((article, index) => (
-              <div 
+              <div
                 key={article.id}
                 className="animate-fade-in"
                 style={{ animationDelay: `${(index % 4) * 50}ms` }}
@@ -567,7 +723,7 @@ function App() {
               </div>
             ))}
           </div>
-        )}
+        ))}
 
         {/* Show More Button - only on Discover tab, Feed view */}
         {activeTab === 'discover' && viewMode === 'feed' && (
