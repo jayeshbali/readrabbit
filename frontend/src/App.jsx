@@ -99,22 +99,6 @@ function App() {
     localStorage.setItem('readrabbit_saved', JSON.stringify(savedArticles))
   }, [savedArticles])
 
-  // Auth gate — show sign-in if Clerk loaded and user is not signed in
-  if (isAuthLoaded && !isSignedIn) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl shadow-orange-500/25">
-            <span className="text-3xl">🐰</span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">ReadRabbit</h1>
-          <p className="text-sm text-gray-500">Your personalised reading feed</p>
-        </div>
-        <SignIn />
-      </div>
-    )
-  }
-
   // Show "waking up" message if loading takes > 3 seconds
   useEffect(() => {
     if (loading) {
@@ -463,6 +447,22 @@ function App() {
         showToast('Articles added!')
       }}
     />
+  }
+
+  // Auth gate — must come after all hooks (Rules of Hooks: no early returns before hook calls)
+  if (isAuthLoaded && !isSignedIn) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
+        <div className="mb-8 flex flex-col items-center gap-3">
+          <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl shadow-orange-500/25">
+            <span className="text-3xl">🐰</span>
+          </div>
+          <h1 className="text-2xl font-bold text-gray-900">ReadRabbit</h1>
+          <p className="text-sm text-gray-500">Your personalised reading feed</p>
+        </div>
+        <SignIn />
+      </div>
+    )
   }
 
   return (
