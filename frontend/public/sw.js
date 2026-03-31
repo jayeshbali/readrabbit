@@ -1,4 +1,4 @@
-const CACHE_NAME = 'readrabbit-v2';
+const CACHE_NAME = 'readrabbit-v3';
 const OFFLINE_URL = '/offline.html';
 
 // Assets to cache on install
@@ -37,9 +37,14 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   // Skip non-GET requests
   if (event.request.method !== 'GET') return;
-  
+
   // Skip API requests (always fetch fresh)
   if (event.request.url.includes('/api/')) return;
+
+  // Skip cross-origin requests — Clerk auth iframe, PostHog, CDN fonts etc.
+  // Opaque cross-origin responses can't be cached safely and SW interference
+  // breaks Clerk's session handshake.
+  if (!event.request.url.startsWith(self.location.origin)) return;
   
   event.respondWith(
     fetch(event.request)
