@@ -41,6 +41,22 @@ class ArticleStatus(str, enum.Enum):
     DISMISSED = "Dismissed"
 
 
+class Source(Base):
+    """RSS/feed sources for the ingestion pipeline."""
+    __tablename__ = "sources"
+
+    id = Column(String, primary_key=True)
+    domain = Column(String(200), nullable=False, unique=True)
+    name = Column(String(200), nullable=False)
+    category = Column(String(100))  # e.g. 'tech', 'science', 'business'
+    source_type = Column(String(20), default="static")  # 'static' | 'dynamic' | 'probation'
+    feed_url = Column(String(2000))
+    is_active = Column(Integer, default=1)  # 1=active, 0=inactive
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # No ORM relationship — source_id on Article is added via migration (not DDL FK)
+
+
 class Article(Base):
     __tablename__ = "articles"
 
@@ -56,7 +72,7 @@ class Article(Base):
     status = Column(String(50), default=ArticleStatus.UNREAD.value)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    
+
     # Embedding for recommendations (1536 dimensions for OpenAI text-embedding-3-small)
     embedding = Column(ARRAY(Float))
 
@@ -65,6 +81,18 @@ class Article(Base):
 
     # Phase 3A: Groq LLM quality score (0.0–1.0), populated during enrichment
     groq_quality_score = Column(Float, nullable=True)
+
+    # Phase 4: Admin curation pipeline fields
+    # curation_status is SEPARATE from status (which is user-facing Unread/Read/Dismissed)
+    curation_status = Column(String(20), default="raw")  # 'raw' | 'surfaced' | 'approved' | 'rejected'
+    surfaced_at = Column(DateTime, nullable=True)    # when admin queue generator surfaced this
+    reviewed_at = Column(DateTime, nullable=True)    # when admin approved/rejected
+    reviewed_by = Column(String(200), nullable=True) # admin user_id
+
+    # Ingestion pipeline fields
+    published_at = Column(DateTime, nullable=True)   # original publication date from feed
+    word_count = Column(Integer, nullable=True)
+    source_id = Column(String, nullable=True)        # references sources.id (FK added via migration)
 
     # Relationship to saved articles
     saved_by = relationship("SavedArticle", back_populates="article")
@@ -84,6 +112,13 @@ class Article(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "has_embedding": self.embedding is not None,
             "groq_quality_score": self.groq_quality_score,
+            "curation_status": self.curation_status,
+            "surfaced_at": self.surfaced_at.isoformat() if self.surfaced_at else None,
+            "reviewed_at": self.reviewed_at.isoformat() if self.reviewed_at else None,
+            "reviewed_by": self.reviewed_by,
+            "published_at": self.published_at.isoformat() if self.published_at else None,
+            "word_count": self.word_count,
+            "source_id": self.source_id,
         }
 
 

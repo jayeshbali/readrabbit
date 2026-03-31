@@ -54,6 +54,10 @@ function AdminPage({ onBack }) {
   const [suggestJobStatus, setSuggestJobStatus] = useState(null) // 'pending' | 'complete' | 'failed'
   const pollRef = useRef(null)
 
+  // Queue generation state (auto mode)
+  const [queueGenerating, setQueueGenerating] = useState(false)
+  const [queueResult, setQueueResult] = useState(null)
+
   // Fetch stats and articles on mount
   useEffect(() => {
     if (adminToken) {
@@ -377,6 +381,26 @@ function AdminPage({ onBack }) {
     setCandidates(prev => prev.filter(c => c.url !== candidateUrl))
   }
 
+  const handleGenerateQueue = async () => {
+    setQueueGenerating(true)
+    setError(null)
+    setQueueResult(null)
+    try {
+      const res = await fetch(`${API_BASE}/admin/queue/generate`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ limit: 50 })
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Failed to generate queue')
+      setQueueResult(data)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setQueueGenerating(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Header */}
@@ -555,11 +579,36 @@ function AdminPage({ onBack }) {
 
               {/* Input based on mode */}
               {discoverMode === 'auto' && (
-                <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg">
-                  AI will discover articles based on your library clusters: 
-                  {libraryClusters.length > 0 
-                    ? ' ' + libraryClusters.map(c => c.name).join(', ')
-                    : ' Startups, Philosophy, Psychology...'}
+                <div className="space-y-3">
+                  <div className="text-sm text-gray-500 bg-gray-50 p-3 rounded-lg">
+                    Runs the 5-stage internal pipeline: fetch raw articles → MMR diversity re-rank → slot allocation → ordering → persist surfaced queue.
+                  </div>
+                  <button
+                    onClick={handleGenerateQueue}
+                    disabled={queueGenerating}
+                    className="w-full py-3 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
+                  >
+                    {queueGenerating ? (
+                      <span className="flex items-center justify-center gap-2">
+                        <svg className="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                        </svg>
+                        Generating Queue...
+                      </span>
+                    ) : (
+                      '⚡ Generate Queue'
+                    )}
+                  </button>
+                  {queueResult && (
+                    <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-sm space-y-1">
+                      <div className="font-medium text-green-800">✅ Queue generated — {queueResult.surfaced} articles surfaced</div>
+                      <div className="text-green-700 text-xs">
+                        Gini: {queueResult.diversity_metrics?.gini} · Entropy: {queueResult.diversity_metrics?.shannon_entropy}
+                        {queueResult.diversity_metrics?.gini_flag && ' · ⚠️ High source concentration'}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -600,8 +649,8 @@ function AdminPage({ onBack }) {
                 </select>
               )}
 
-              {/* Discover Button */}
-              <button
+              {/* Discover Button — hidden for auto mode (has its own Generate Queue button) */}
+              {discoverMode !== 'auto' && <button
                 onClick={handleDiscover}
                 disabled={loading}
                 className="w-full py-3 bg-orange-500 text-white font-medium rounded-lg hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm"
@@ -617,7 +666,7 @@ function AdminPage({ onBack }) {
                 ) : (
                   'Find Articles'
                 )}
-              </button>
+              </button>}
 
               {/* Polling status indicator */}
               {loading && suggestJobId && (

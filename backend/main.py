@@ -12,7 +12,7 @@ import jwt
 from contextlib import asynccontextmanager
 
 # Database imports
-from database import get_db, init_db, Article, SourceType, ArticleStatus, SessionLocal, ReadingHistory, EvalEvent, User
+from database import get_db, init_db, Article, Source, SourceType, ArticleStatus, SessionLocal, ReadingHistory, EvalEvent, User
 
 # Check if database is configured
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -55,6 +55,72 @@ def run_migrations():
         """))
         db.commit()
         print("Database migration completed - embedding + is_saved + groq_quality_score columns ready")
+    except Exception as e:
+        db.rollback()
+        print(f"Migration note: {e}")
+    finally:
+        db.close()
+
+    # Phase 4: admin curation pipeline columns — separate transaction
+    db = SessionLocal()
+    try:
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS curation_status TEXT DEFAULT 'raw'
+        """))
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS surfaced_at TIMESTAMP
+        """))
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP
+        """))
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS reviewed_by TEXT
+        """))
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS published_at TIMESTAMP
+        """))
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS word_count INTEGER
+        """))
+        db.execute(text("""
+            ALTER TABLE articles
+            ADD COLUMN IF NOT EXISTS source_id TEXT
+        """))
+        # Create sources table
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS sources (
+                id TEXT PRIMARY KEY,
+                domain TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                category TEXT,
+                source_type TEXT DEFAULT 'static',
+                feed_url TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        # Add FK constraint for source_id only if not already present
+        db.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint
+                    WHERE conname = 'articles_source_id_fkey'
+                ) THEN
+                    ALTER TABLE articles
+                    ADD CONSTRAINT articles_source_id_fkey
+                    FOREIGN KEY (source_id) REFERENCES sources(id) ON DELETE SET NULL;
+                END IF;
+            END$$
+        """))
+        db.commit()
+        print("Phase 4 migration complete - curation pipeline columns + sources table ready")
     except Exception as e:
         db.rollback()
         print(f"Migration note: {e}")
@@ -2101,6 +2167,171 @@ def run_tests():
         "passed": result.returncode == 0,
         "output": result.stdout,
         "errors": result.stderr,
+    }
+
+
+# ============== Admin Queue Routes (Phase 4) ==============
+
+class GenerateQueueRequest(BaseModel):
+    limit: int = 50
+    lambda_: float = 0.7
+    source_cap: int = 2
+    category_floor: int = 3
+    indie_quota: int = 2
+
+class ReviewArticleRequest(BaseModel):
+    article_id: str
+    decision: str  # 'approved' | 'rejected'
+
+class BulkReviewRequest(BaseModel):
+    reviews: list[dict]  # [{"article_id": str, "decision": str}]
+
+
+@app.post("/api/admin/queue/generate", dependencies=[Depends(verify_admin)])
+def generate_admin_queue(
+    request: GenerateQueueRequest = GenerateQueueRequest(),
+    db: Session = Depends(get_db),
+    admin=Depends(verify_admin),
+):
+    """Run the 5-stage pipeline to surface candidate articles into the admin review queue."""
+    from admin_recommendation import generate_queue
+    try:
+        admin_user_id = admin.get("sub", "admin") if isinstance(admin, dict) else str(admin)
+        result = generate_queue(
+            db=db,
+            admin_user_id=admin_user_id,
+            limit=request.limit,
+            lambda_=request.lambda_,
+            source_cap=request.source_cap,
+            category_floor=request.category_floor,
+            indie_quota=request.indie_quota,
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/admin/queue", dependencies=[Depends(verify_admin)])
+def get_admin_queue(
+    page: int = 1,
+    per_page: int = 20,
+    db: Session = Depends(get_db),
+):
+    """Return surfaced articles awaiting admin review, with pagination."""
+    offset = (page - 1) * per_page
+    total = db.query(Article).filter(Article.curation_status == "surfaced").count()
+    articles = (
+        db.query(Article)
+        .filter(Article.curation_status == "surfaced")
+        .order_by(Article.surfaced_at.desc())
+        .offset(offset)
+        .limit(per_page)
+        .all()
+    )
+    return {
+        "articles": [a.to_dict() for a in articles],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": (total + per_page - 1) // per_page,
+    }
+
+
+@app.post("/api/admin/queue/review", dependencies=[Depends(verify_admin)])
+def review_article(
+    request: ReviewArticleRequest,
+    db: Session = Depends(get_db),
+    admin=Depends(verify_admin),
+):
+    """Approve or reject a single article in the queue."""
+    if request.decision not in ("approved", "rejected"):
+        raise HTTPException(status_code=400, detail="decision must be 'approved' or 'rejected'")
+
+    article = db.query(Article).filter(Article.id == request.article_id).first()
+    if not article:
+        raise HTTPException(status_code=404, detail="Article not found")
+    if article.curation_status != "surfaced":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Article curation_status is '{article.curation_status}', expected 'surfaced'",
+        )
+
+    from datetime import datetime as dt
+    admin_user_id = admin.get("sub", "admin") if isinstance(admin, dict) else str(admin)
+    article.curation_status = request.decision
+    article.reviewed_at = dt.utcnow()
+    article.reviewed_by = admin_user_id
+    db.commit()
+
+    return {"article_id": request.article_id, "curation_status": request.decision}
+
+
+@app.post("/api/admin/queue/review/bulk", dependencies=[Depends(verify_admin)])
+def bulk_review_articles(
+    request: BulkReviewRequest,
+    db: Session = Depends(get_db),
+    admin=Depends(verify_admin),
+):
+    """Approve or reject multiple articles at once."""
+    from datetime import datetime as dt
+    admin_user_id = admin.get("sub", "admin") if isinstance(admin, dict) else str(admin)
+
+    results = []
+    errors = []
+    for item in request.reviews:
+        article_id = item.get("article_id")
+        decision = item.get("decision")
+        if decision not in ("approved", "rejected"):
+            errors.append({"article_id": article_id, "error": "invalid decision"})
+            continue
+        article = db.query(Article).filter(Article.id == article_id).first()
+        if not article:
+            errors.append({"article_id": article_id, "error": "not found"})
+            continue
+        if article.curation_status != "surfaced":
+            errors.append({"article_id": article_id, "error": f"status is '{article.curation_status}'"})
+            continue
+        article.curation_status = decision
+        article.reviewed_at = dt.utcnow()
+        article.reviewed_by = admin_user_id
+        results.append({"article_id": article_id, "curation_status": decision})
+
+    db.commit()
+    return {"updated": results, "errors": errors}
+
+
+@app.get("/api/admin/queue/stats", dependencies=[Depends(verify_admin)])
+def get_queue_stats(db: Session = Depends(get_db)):
+    """Return diversity metrics, status counts, and source breakdown for the queue."""
+    from admin_recommendation import compute_source_gini, compute_shannon_entropy
+
+    raw_count = db.query(Article).filter(Article.curation_status == "raw").count()
+    surfaced_count = db.query(Article).filter(Article.curation_status == "surfaced").count()
+    approved_count = db.query(Article).filter(Article.curation_status == "approved").count()
+    rejected_count = db.query(Article).filter(Article.curation_status == "rejected").count()
+
+    surfaced_articles = db.query(Article).filter(Article.curation_status == "surfaced").all()
+
+    gini = compute_source_gini(surfaced_articles) if surfaced_articles else 0.0
+    entropy = compute_shannon_entropy(surfaced_articles) if surfaced_articles else 0.0
+
+    # Source breakdown for surfaced queue
+    from collections import Counter
+    source_counts = Counter(a.source or "unknown" for a in surfaced_articles)
+
+    return {
+        "counts": {
+            "raw": raw_count,
+            "surfaced": surfaced_count,
+            "approved": approved_count,
+            "rejected": rejected_count,
+        },
+        "diversity": {
+            "gini": round(gini, 4),
+            "shannon_entropy": round(entropy, 4),
+            "gini_flag": gini > 0.35,
+        },
+        "source_breakdown": dict(source_counts.most_common(20)),
     }
 
 
