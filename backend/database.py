@@ -1,4 +1,5 @@
-from sqlalchemy import create_engine, Column, String, Integer, Text, DateTime, ForeignKey, Enum, ARRAY, Float, JSON
+from sqlalchemy import create_engine, Column, String, Integer, Text, DateTime, ForeignKey, Enum, ARRAY, Float
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from datetime import datetime
@@ -132,7 +133,7 @@ class EvalEvent(Base):
     event_type = Column(String(100), nullable=False)  # 'suggest_accepted', 'for_you_click', etc.
     article_id = Column(String, ForeignKey("articles.id", ondelete="SET NULL"), nullable=True)
     user_id = Column(String, nullable=True)  # anonymous localStorage UUID
-    event_metadata = Column("metadata", JSON, nullable=True)   # flexible payload per event type
+    event_metadata = Column("metadata", JSONB, nullable=True)   # flexible payload per event type
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

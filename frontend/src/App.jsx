@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useUser, SignIn, UserButton } from '@clerk/clerk-react'
+import { useUser, useAuth, SignIn, UserButton } from '@clerk/clerk-react'
 import posthog from 'posthog-js'
 import ArticleCard from './components/ArticleCard'
 import AdminPage from './components/AdminPage'
@@ -9,6 +9,7 @@ const API_BASE = import.meta.env.VITE_API_URL || '/api'
 
 function App() {
   const { isSignedIn, isLoaded: isAuthLoaded, user } = useUser()
+  const { getToken } = useAuth()
   const [articles, setArticles] = useState([])
   const [savedArticles, setSavedArticles] = useState([])
   const [loading, setLoading] = useState(true)
@@ -33,15 +34,20 @@ function App() {
         email: user.primaryEmailAddress?.emailAddress,
         name: user.fullName,
       })
-      // Upsert user record in backend (best-effort)
-      fetch(`${API_BASE}/users/me`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          id: user.id,
-          email: user.primaryEmailAddress?.emailAddress,
-          name: user.fullName,
-        }),
+      // Upsert user record in backend — send Clerk JWT so the server can verify identity
+      getToken().then((token) => {
+        fetch(`${API_BASE}/users/me`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({
+            id: user.id,
+            email: user.primaryEmailAddress?.emailAddress,
+            name: user.fullName,
+          }),
+        }).catch(() => {})
       }).catch(() => {})
     } else if (!isSignedIn) {
       // Fallback anonymous ID for unauthenticated state
@@ -154,12 +160,13 @@ function App() {
     }
   }, [])
 
-  // Fetch For You articles when tab becomes active
+  // Fetch For You articles when tab becomes active — wait for auth to load
+  // so userId.current is set (either Clerk ID or anonymous UUID) before the request
   useEffect(() => {
-    if (activeTab === 'for-you' && forYouArticles.length === 0) {
+    if (activeTab === 'for-you' && forYouArticles.length === 0 && isAuthLoaded) {
       fetchForYou()
     }
-  }, [activeTab, fetchForYou, forYouArticles.length])
+  }, [activeTab, fetchForYou, forYouArticles.length, isAuthLoaded])
 
   const fetchArticles = useCallback(async (append = false) => {
     try {

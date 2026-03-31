@@ -8,6 +8,7 @@ from typing import Optional
 import random
 import os
 import uuid
+import jwt
 from contextlib import asynccontextmanager
 
 # Database imports
@@ -130,6 +131,58 @@ def verify_admin(creds: Optional[HTTPAuthorizationCredentials] = Depends(_http_b
     token = os.getenv("ADMIN_TOKEN", "")
     if not token or creds is None or creds.credentials != token:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+# ============== Clerk JWT Auth ==============
+
+def verify_clerk_token(creds: Optional[HTTPAuthorizationCredentials] = Depends(_http_bearer)) -> str:
+    """Verify a Clerk-issued JWT and return the subject (user_id).
+
+    Clerk signs JWTs with RS256 using a key pair specific to your instance.
+    The public key is available at:
+      https://<your-clerk-frontend-api>/.well-known/jwks.json
+    Set CLERK_JWT_PUBLIC_KEY (PEM) or CLERK_JWKS_URL in the environment.
+
+    Falls back to an INSECURE dev mode if neither is set — never use in prod.
+    """
+    if creds is None:
+        raise HTTPException(status_code=401, detail="Missing authorization header")
+
+    token = creds.credentials
+    public_key_pem = os.getenv("CLERK_JWT_PUBLIC_KEY", "")
+    jwks_url = os.getenv("CLERK_JWKS_URL", "")
+
+    if not public_key_pem and not jwks_url:
+        # Dev fallback: decode without signature verification.
+        # This is intentionally insecure — fine for local dev, never for prod.
+        # Set CLERK_JWT_PUBLIC_KEY on Render to enable proper verification.
+        try:
+            payload = jwt.decode(token, options={"verify_signature": False})
+            return payload["sub"]
+        except Exception:
+            raise HTTPException(status_code=401, detail="Invalid token")
+
+    try:
+        if public_key_pem:
+            payload = jwt.decode(token, public_key_pem, algorithms=["RS256"])
+        else:
+            # Fetch JWKS and verify (requires PyJWT[crypto] + requests at runtime)
+            import urllib.request, json as _json
+            with urllib.request.urlopen(jwks_url) as resp:
+                jwks = _json.loads(resp.read())
+            from jwt.algorithms import RSAAlgorithm
+            for key_data in jwks.get("keys", []):
+                try:
+                    pub = RSAAlgorithm.from_jwk(_json.dumps(key_data))
+                    payload = jwt.decode(token, pub, algorithms=["RS256"])
+                    break
+                except Exception:
+                    continue
+            else:
+                raise ValueError("No matching key in JWKS")
+        return payload["sub"]
+    except Exception:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
 
 
 # ============== AI Suggest Job Store ==============
@@ -460,8 +513,18 @@ class UserUpsertRequest(BaseModel):
 
 
 @app.post("/api/users/me")
-def upsert_user(body: UserUpsertRequest, db: Session = Depends(get_db)):
-    """Create or update a user record (called after Clerk sign-in)."""
+def upsert_user(
+    body: UserUpsertRequest,
+    db: Session = Depends(get_db),
+    token_sub: str = Depends(verify_clerk_token),
+):
+    """Create or update a user record (called after Clerk sign-in).
+
+    The JWT subject must match body.id so a user can only upsert their own record.
+    """
+    if token_sub != body.id:
+        raise HTTPException(status_code=403, detail="Token subject does not match user id")
+
     existing = db.query(User).filter(User.id == body.id).first()
     if existing:
         if body.name:
