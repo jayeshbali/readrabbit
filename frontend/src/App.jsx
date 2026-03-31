@@ -104,7 +104,7 @@ function App() {
           <h1 className="text-2xl font-bold text-gray-900">ReadRabbit</h1>
           <p className="text-sm text-gray-500">Your personalised reading feed</p>
         </div>
-        <SignIn routing="hash" />
+        <SignIn />
       </div>
     )
   }
