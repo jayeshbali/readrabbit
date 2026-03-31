@@ -475,14 +475,21 @@ function App() {
                 </svg>
               </button>
             </div>
-            <div className="flex flex-col items-center mb-4">
+            <div className="flex flex-col items-center mb-6">
               <div className="w-12 h-12 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/25 mb-3">
                 <span className="text-2xl">🐰</span>
               </div>
               <h2 className="text-lg font-bold text-gray-900">Sign in to continue</h2>
               <p className="text-sm text-gray-500 mt-1 text-center">Create a free account to save articles and get personalised recommendations</p>
             </div>
-            <SignIn routing="hash" />
+            <SignInButton mode="modal">
+              <button
+                onClick={() => setShowAuthPrompt(false)}
+                className="w-full px-6 py-3 bg-orange-500 text-white font-semibold rounded-xl hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
+              >
+                Sign in / Create account
+              </button>
+            </SignInButton>
           </div>
         </div>
       )}
@@ -534,15 +541,17 @@ function App() {
             {/* View Toggle + Actions */}
             <div className="flex items-center gap-1 sm:gap-2">
               <ViewToggle />
-              <button
-                onClick={() => setShowAgent(true)}
-                className="p-2 sm:p-2.5 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-colors"
-                title="Discover"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-              </button>
+              {isSignedIn && (
+                <button
+                  onClick={() => setShowAgent(true)}
+                  className="p-2 sm:p-2.5 text-gray-500 hover:text-orange-600 hover:bg-orange-50 rounded-xl transition-colors"
+                  title="Discover"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </button>
+              )}
               {ADMIN_USER_ID && user?.id === ADMIN_USER_ID && (
                 <button
                   onClick={() => setShowAdmin(true)}
@@ -790,7 +799,7 @@ function App() {
           </div>
         )}
 
-        {activeTab !== 'for-you' && isSignedIn && (activeTab === 'saved' && savedArticles.length === 0 ? (
+        {activeTab !== 'for-you' && (isSignedIn || activeTab === 'discover') && (activeTab === 'saved' && savedArticles.length === 0 ? (
           <div className="text-center py-12 sm:py-16 px-4">
             <div className="relative inline-block mb-6">
               <div className="w-24 h-24 bg-gradient-to-br from-orange-100 to-orange-50 rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-orange-500/10">
