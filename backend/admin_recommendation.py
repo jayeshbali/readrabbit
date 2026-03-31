@@ -86,18 +86,19 @@ def _cosine_similarity(v1, v2) -> float:
 
 def generate_candidates(db, limit: int = 200):
     """
-    Fetch raw articles that have a quality score and embedding.
-    Compute candidate_score = quality_score × freshness_weight × source_tier_boost.
+    Fetch raw articles and compute candidate_score.
+    Falls back gracefully when groq_quality_score or embedding is absent:
+      - Missing quality score → treated as 0.5 (neutral)
+      - Missing embedding    → article still included; MMR step will skip similarity
     Returns list of dicts with article + scores.
     """
     articles = (
         db.query(Article)
-        .filter(
-            Article.curation_status == "raw",
-            Article.groq_quality_score.isnot(None),
-            Article.embedding.isnot(None),
+        .filter(Article.curation_status == "raw")
+        .order_by(
+            Article.groq_quality_score.desc().nullslast(),
+            Article.created_at.desc(),
         )
-        .order_by(Article.groq_quality_score.desc())
         .limit(limit * 4)  # over-fetch so later stages have room to filter
         .all()
     )
@@ -114,7 +115,7 @@ def generate_candidates(db, limit: int = 200):
         st = source_type_map.get(art.source_id, "static")
         fw = freshness_weight(art.published_at)
         boost = _source_tier_boost(st)
-        score = (art.groq_quality_score or 0.0) * fw * boost
+        score = (art.groq_quality_score if art.groq_quality_score is not None else 0.5) * fw * boost
         candidates.append({
             "article": art,
             "candidate_score": score,
