@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
-import { useUser, useAuth, SignIn, UserButton } from '@clerk/clerk-react'
+import { useUser, useAuth, SignIn, SignInButton, UserButton } from '@clerk/clerk-react'
 import posthog from 'posthog-js'
 import ArticleCard from './components/ArticleCard'
 import AdminPage from './components/AdminPage'
 import DiscoverAgent from './components/DiscoverAgent'
 
 const API_BASE = import.meta.env.VITE_API_URL || '/api'
+const ADMIN_USER_ID = import.meta.env.VITE_ADMIN_USER_ID || ''
 
 function App() {
   const { isSignedIn, isLoaded: isAuthLoaded, user } = useUser()
@@ -70,6 +71,9 @@ function App() {
   
   // Toast notification state
   const [toast, setToast] = useState(null)
+
+  // Auth prompt modal state
+  const [showAuthPrompt, setShowAuthPrompt] = useState(false)
   
   // Pull to refresh state
   const [pullDistance, setPullDistance] = useState(0)
@@ -144,13 +148,12 @@ function App() {
     }
   }, [])
 
-  // Fetch For You articles when tab becomes active — wait for auth to load
-  // so userId.current is set (either Clerk ID or anonymous UUID) before the request
+  // Fetch For You articles when tab becomes active — require sign-in
   useEffect(() => {
-    if (activeTab === 'for-you' && forYouArticles.length === 0 && isAuthLoaded) {
+    if (activeTab === 'for-you' && forYouArticles.length === 0 && isAuthLoaded && isSignedIn) {
       fetchForYou()
     }
-  }, [activeTab, fetchForYou, forYouArticles.length, isAuthLoaded])
+  }, [activeTab, fetchForYou, forYouArticles.length, isAuthLoaded, isSignedIn])
 
   const fetchArticles = useCallback(async (append = false) => {
     try {
@@ -253,6 +256,10 @@ function App() {
   }
 
   const handleSave = (article) => {
+    if (!isSignedIn) {
+      setShowAuthPrompt(true)
+      return
+    }
     const isAlreadySaved = savedArticles.some((a) => a.id === article.id)
     if (isAlreadySaved) {
       setSavedArticles((prev) => prev.filter((a) => a.id !== article.id))
@@ -449,24 +456,37 @@ function App() {
     />
   }
 
-  // Auth gate — must come after all hooks (Rules of Hooks: no early returns before hook calls)
-  if (isAuthLoaded && !isSignedIn) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex flex-col items-center justify-center px-4">
-        <div className="mb-8 flex flex-col items-center gap-3">
-          <div className="w-16 h-16 bg-gradient-to-br from-orange-400 to-orange-500 rounded-2xl flex items-center justify-center shadow-xl shadow-orange-500/25">
-            <span className="text-3xl">🐰</span>
-          </div>
-          <h1 className="text-2xl font-bold text-gray-900">ReadRabbit</h1>
-          <p className="text-sm text-gray-500">Your personalised reading feed</p>
-        </div>
-        <SignIn />
-      </div>
-    )
-  }
-
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Auth Prompt Modal */}
+      {showAuthPrompt && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+          onClick={(e) => { if (e.target === e.currentTarget) setShowAuthPrompt(false) }}
+        >
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-sm w-full">
+            <div className="flex justify-end mb-2">
+              <button
+                onClick={() => setShowAuthPrompt(false)}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="flex flex-col items-center mb-4">
+              <div className="w-12 h-12 bg-gradient-to-br from-orange-400 to-orange-500 rounded-xl flex items-center justify-center shadow-lg shadow-orange-500/25 mb-3">
+                <span className="text-2xl">🐰</span>
+              </div>
+              <h2 className="text-lg font-bold text-gray-900">Sign in to continue</h2>
+              <p className="text-sm text-gray-500 mt-1 text-center">Create a free account to save articles and get personalised recommendations</p>
+            </div>
+            <SignIn routing="hash" />
+          </div>
+        </div>
+      )}
+
       {/* Toast Notification */}
       {toast && (
         <div className={`fixed top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full shadow-lg text-sm font-medium animate-fade-in ${
@@ -523,17 +543,27 @@ function App() {
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
               </button>
-              <button
-                onClick={() => setShowAdmin(true)}
-                className="p-2 sm:p-2.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
-                title="Admin"
-              >
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
-                </svg>
-              </button>
-              {isSignedIn && (
+              {ADMIN_USER_ID && user?.id === ADMIN_USER_ID && (
+                <button
+                  onClick={() => setShowAdmin(true)}
+                  className="p-2 sm:p-2.5 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-xl transition-colors"
+                  title="Admin"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                </button>
+              )}
+              {isSignedIn ? (
                 <UserButton afterSignOutUrl="/" />
+              ) : (
+                isAuthLoaded && (
+                  <SignInButton mode="modal">
+                    <button className="px-3 py-1.5 bg-orange-500 text-white text-sm font-medium rounded-xl hover:bg-orange-600 transition-colors shadow-sm">
+                      Sign in
+                    </button>
+                  </SignInButton>
+                )
               )}
             </div>
           </div>
@@ -556,7 +586,10 @@ function App() {
                 Discover
               </button>
               <button
-                onClick={() => { setActiveTab('for-you'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'for-you' }) }}
+                onClick={() => {
+                  if (!isSignedIn) { setShowAuthPrompt(true); return }
+                  setActiveTab('for-you'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'for-you' })
+                }}
                 className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 ${
                   activeTab === 'for-you'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -566,7 +599,10 @@ function App() {
                 For You
               </button>
               <button
-                onClick={() => { setActiveTab('saved'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'saved' }) }}
+                onClick={() => {
+                  if (!isSignedIn) { setShowAuthPrompt(true); return }
+                  setActiveTab('saved'); setSimilarSource(null); posthog?.capture('tab_changed', { to: 'saved' })
+                }}
                 className={`px-3 sm:px-5 py-1.5 sm:py-2 rounded-full text-sm font-medium transition-all duration-200 flex items-center gap-1.5 ${
                   activeTab === 'saved'
                     ? 'bg-white text-gray-900 shadow-sm'
@@ -616,7 +652,24 @@ function App() {
         )}
 
         {/* For You Tab */}
-        {activeTab === 'for-you' && (
+        {activeTab === 'for-you' && !isSignedIn && (
+          <div className="text-center py-16 px-4">
+            <div className="w-20 h-20 bg-orange-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <span className="text-4xl">✨</span>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Your personalised feed</h3>
+            <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
+              Sign in to get articles curated just for you based on what you read and save
+            </p>
+            <button
+              onClick={() => setShowAuthPrompt(true)}
+              className="px-6 py-3 bg-orange-500 text-white font-medium rounded-xl hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
+            >
+              Sign in to see your feed
+            </button>
+          </div>
+        )}
+        {activeTab === 'for-you' && isSignedIn && (
           <div>
             {/* Cold start banner */}
             {forYouColdStart && !forYouLoading && (
@@ -719,7 +772,25 @@ function App() {
           </div>
         )}
 
-        {activeTab !== 'for-you' && (activeTab === 'saved' && savedArticles.length === 0 ? (
+        {activeTab === 'saved' && !isSignedIn && (
+          <div className="text-center py-16 px-4">
+            <div className="w-20 h-20 bg-orange-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+              <span className="text-4xl">🔖</span>
+            </div>
+            <h3 className="text-lg font-semibold text-gray-900 mb-2">Save articles to read later</h3>
+            <p className="text-sm text-gray-500 mb-6 max-w-xs mx-auto">
+              Sign in to save articles and access them anytime across all your devices
+            </p>
+            <button
+              onClick={() => setShowAuthPrompt(true)}
+              className="px-6 py-3 bg-orange-500 text-white font-medium rounded-xl hover:bg-orange-600 transition-colors shadow-lg shadow-orange-500/20"
+            >
+              Sign in to save articles
+            </button>
+          </div>
+        )}
+
+        {activeTab !== 'for-you' && isSignedIn && (activeTab === 'saved' && savedArticles.length === 0 ? (
           <div className="text-center py-12 sm:py-16 px-4">
             <div className="relative inline-block mb-6">
               <div className="w-24 h-24 bg-gradient-to-br from-orange-100 to-orange-50 rounded-3xl flex items-center justify-center mx-auto shadow-lg shadow-orange-500/10">
