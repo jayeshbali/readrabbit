@@ -13,6 +13,7 @@ from contextlib import asynccontextmanager
 
 # Database imports
 from database import get_db, init_db, Article, Source, SourceType, ArticleStatus, SessionLocal, ReadingHistory, EvalEvent, User
+from feed_crawler import crawl_all_sources
 
 # Check if database is configured
 DATABASE_URL = os.getenv("DATABASE_URL")
@@ -150,6 +151,78 @@ def run_migrations():
     except Exception as e:
         db.rollback()
         print(f"Phase 3 migration note: {e}")
+    finally:
+        db.close()
+
+    # Phase 5: Ingestion pipeline tables + sources columns — separate transaction
+    db = SessionLocal()
+    try:
+        # New columns on sources table
+        db.execute(text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS poll_interval_hrs INTEGER DEFAULT 24"))
+        db.execute(text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS last_crawled_at TIMESTAMP"))
+        db.execute(text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS article_count INTEGER DEFAULT 0"))
+        db.execute(text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS avg_quality_score FLOAT"))
+        db.execute(text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS probation_start TIMESTAMP"))
+        db.execute(text("ALTER TABLE sources ADD COLUMN IF NOT EXISTS discovered_via TEXT"))
+
+        # link_citations: tracks which articles cite which domains (for link-graph expansion)
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS link_citations (
+                id TEXT PRIMARY KEY,
+                source_article_id TEXT REFERENCES articles(id) ON DELETE CASCADE,
+                cited_domain TEXT NOT NULL,
+                cited_url TEXT NOT NULL,
+                anchor_text TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_link_citations_cited_domain ON link_citations(cited_domain)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_link_citations_source_article ON link_citations(source_article_id)"))
+
+        # aggregator_discoveries: tracks articles surfaced by HN/Lobsters/Pinboard/Reddit
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS aggregator_discoveries (
+                id TEXT PRIMARY KEY,
+                url TEXT NOT NULL,
+                title TEXT,
+                aggregator TEXT NOT NULL,
+                score INTEGER DEFAULT 0,
+                comment_count INTEGER DEFAULT 0,
+                discovered_at TIMESTAMP DEFAULT NOW(),
+                article_id TEXT REFERENCES articles(id) ON DELETE SET NULL
+            )
+        """))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_agg_discoveries_url ON aggregator_discoveries(url)"))
+        db.execute(text("CREATE INDEX IF NOT EXISTS idx_agg_discoveries_aggregator ON aggregator_discoveries(aggregator)"))
+
+        # domain_blacklist: domains excluded from ingestion
+        db.execute(text("""
+            CREATE TABLE IF NOT EXISTS domain_blacklist (
+                domain TEXT PRIMARY KEY,
+                reason TEXT,
+                added_at TIMESTAMP DEFAULT NOW()
+            )
+        """))
+
+        # Seed blacklist with known low-quality domains
+        blacklist_domains = [
+            ("medium.com", "aggregator/low-signal"),
+            ("forbes.com", "clickbait/ads"),
+            ("buzzfeed.com", "listicle/low-quality"),
+            ("huffpost.com", "clickbait/low-quality"),
+            ("businessinsider.com", "paywalled/low-signal"),
+            ("mashable.com", "clickbait/low-quality"),
+        ]
+        for domain, reason in blacklist_domains:
+            db.execute(text(
+                "INSERT INTO domain_blacklist (domain, reason) VALUES (:d, :r) ON CONFLICT (domain) DO NOTHING"
+            ), {"d": domain, "r": reason})
+
+        db.commit()
+        print("Phase 5 schema ready - pipeline tables, sources columns, blacklist seeded")
+    except Exception as e:
+        db.rollback()
+        print(f"Phase 5 migration note: {e}")
     finally:
         db.close()
 
@@ -644,6 +717,18 @@ def get_eval_stats(db: Session = Depends(get_db)):
         "by_event_type": {et: c for et, c in by_type},
         "reading_history_total": reading_history_total,
     }
+
+
+@app.post("/api/admin/pipeline/crawl", dependencies=[Depends(verify_admin)])
+async def trigger_feed_crawl(
+    force: bool = False,
+    max_sources: Optional[int] = None,
+    max_articles: int = 50,
+    db: Session = Depends(get_db),
+):
+    """Trigger RSS feed crawl for all active sources."""
+    stats = await crawl_all_sources(db, force=force, max_sources=max_sources, max_articles=max_articles)
+    return stats
 
 
 # ============== AI-Powered Endpoints ==============
