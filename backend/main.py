@@ -725,6 +725,17 @@ def get_eval_stats(db: Session = Depends(get_db)):
     }
 
 
+@app.post("/api/admin/pipeline/test-notify", dependencies=[Depends(verify_admin)])
+def test_pipeline_notify():
+    """Send a test email to verify Resend + NOTIFY_EMAIL are configured correctly."""
+    from scheduler import _send_notification
+    _send_notification(
+        subject="[ReadRabbit] Test notification",
+        body="This is a test email from ReadRabbit pipeline notifications.\n\nIf you received this, email alerts are working correctly.",
+    )
+    return {"status": "sent"}
+
+
 @app.post("/api/admin/pipeline/crawl", dependencies=[Depends(verify_admin)])
 async def trigger_feed_crawl(
     force: bool = False,
