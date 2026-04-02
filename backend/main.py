@@ -727,13 +727,27 @@ def get_eval_stats(db: Session = Depends(get_db)):
 
 @app.post("/api/admin/pipeline/test-notify", dependencies=[Depends(verify_admin)])
 def test_pipeline_notify():
-    """Send a test email to verify Resend + NOTIFY_EMAIL are configured correctly."""
-    from scheduler import _send_notification
-    _send_notification(
-        subject="[ReadRabbit] Test notification",
-        body="This is a test email from ReadRabbit pipeline notifications.\n\nIf you received this, email alerts are working correctly.",
-    )
-    return {"status": "sent"}
+    """Send a test email and return the raw Resend API response for debugging."""
+    import httpx
+    api_key = os.getenv("RESEND_API_KEY", "")
+    notify_email = os.getenv("NOTIFY_EMAIL", "")
+    if not api_key or not notify_email:
+        return {"error": "RESEND_API_KEY or NOTIFY_EMAIL not set", "api_key_set": bool(api_key), "notify_email": notify_email}
+    try:
+        res = httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "from": "ReadRabbit Pipeline <onboarding@resend.dev>",
+                "to": [notify_email],
+                "subject": "[ReadRabbit] Test notification",
+                "text": "This is a test email from ReadRabbit pipeline notifications.\n\nIf you received this, email alerts are working correctly.",
+            },
+            timeout=10,
+        )
+        return {"status_code": res.status_code, "response": res.json()}
+    except Exception as e:
+        return {"error": str(e)}
 
 
 @app.post("/api/admin/pipeline/crawl", dependencies=[Depends(verify_admin)])
