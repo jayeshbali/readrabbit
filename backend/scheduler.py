@@ -21,6 +21,8 @@ import traceback
 from datetime import datetime, timezone
 from typing import Callable, Optional
 
+import httpx
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
@@ -48,6 +50,29 @@ _last_run: dict[str, dict] = {
 
 _scheduler: Optional[BackgroundScheduler] = None
 
+RESEND_API_KEY = os.getenv("RESEND_API_KEY", "")
+NOTIFY_EMAIL = os.getenv("NOTIFY_EMAIL", "")
+
+
+def _send_notification(subject: str, body: str) -> None:
+    """Send a pipeline completion email via Resend. Best-effort — never raises."""
+    if not RESEND_API_KEY or not NOTIFY_EMAIL:
+        return
+    try:
+        httpx.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
+            json={
+                "from": "ReadRabbit Pipeline <onboarding@resend.dev>",
+                "to": [NOTIFY_EMAIL],
+                "subject": subject,
+                "text": body,
+            },
+            timeout=10,
+        )
+    except Exception as exc:
+        logger.warning("Failed to send notification email: %s", exc)
+
 
 # ---------------------------------------------------------------------------
 # Job wrappers
@@ -70,10 +95,24 @@ def _run_feed_crawler(db_factory: Callable) -> None:
             stats.get("sources_crawled", 0),
             stats.get("new_articles", 0),
         )
+        _send_notification(
+            subject=f"[ReadRabbit] Feed Crawler — {stats.get('new_articles', 0)} new articles",
+            body=(
+                f"Layer 1: Feed Crawler completed.\n\n"
+                f"Sources crawled: {stats.get('sources_crawled', 0)}\n"
+                f"New articles:    {stats.get('new_articles', 0)}\n"
+                f"Skipped:         {stats.get('skipped', 0)}\n"
+                f"Errors:          {stats.get('errors', 0)}\n"
+            ),
+        )
     except Exception as exc:
         _last_run["feed_crawler"]["last_ran"] = datetime.now(timezone.utc).isoformat()
         _last_run["feed_crawler"]["last_error"] = str(exc)
         logger.error("Scheduler: feed_crawler failed: %s\n%s", exc, traceback.format_exc())
+        _send_notification(
+            subject="[ReadRabbit] Feed Crawler — FAILED",
+            body=f"Layer 1: Feed Crawler failed with error:\n\n{exc}\n\n{traceback.format_exc()}",
+        )
         try:
             db.rollback()
         except Exception:
@@ -101,10 +140,24 @@ def _run_link_graph(db_factory: Callable) -> None:
             stats.get("articles_scanned", 0),
             stats.get("new_sources", 0),
         )
+        _send_notification(
+            subject=f"[ReadRabbit] Link Graph — {stats.get('new_sources', 0)} new sources discovered",
+            body=(
+                f"Layer 2: Link Graph completed.\n\n"
+                f"Articles scanned: {stats.get('articles_scanned', 0)}\n"
+                f"Citations found:  {stats.get('citations_found', 0)}\n"
+                f"New sources:      {stats.get('new_sources', 0)}\n"
+                f"Errors:           {stats.get('errors', 0)}\n"
+            ),
+        )
     except Exception as exc:
         _last_run["link_graph"]["last_ran"] = datetime.now(timezone.utc).isoformat()
         _last_run["link_graph"]["last_error"] = str(exc)
         logger.error("Scheduler: link_graph failed: %s\n%s", exc, traceback.format_exc())
+        _send_notification(
+            subject="[ReadRabbit] Link Graph — FAILED",
+            body=f"Layer 2: Link Graph failed with error:\n\n{exc}\n\n{traceback.format_exc()}",
+        )
         try:
             db.rollback()
         except Exception:
@@ -132,10 +185,24 @@ def _run_aggregator_tap(db_factory: Callable) -> None:
             stats.get("total_discovered", 0),
             stats.get("total_ingested", 0),
         )
+        _send_notification(
+            subject=f"[ReadRabbit] Aggregator Tap — {stats.get('total_ingested', 0)} articles ingested",
+            body=(
+                f"Layer 3: Aggregator Tap completed.\n\n"
+                f"Sources tapped:  {stats.get('sources_tapped', 0)}\n"
+                f"Discovered:      {stats.get('total_discovered', 0)}\n"
+                f"New articles:    {stats.get('total_ingested', 0)}\n"
+                f"Errors:          {stats.get('errors', 0)}\n"
+            ),
+        )
     except Exception as exc:
         _last_run["aggregator_tap"]["last_ran"] = datetime.now(timezone.utc).isoformat()
         _last_run["aggregator_tap"]["last_error"] = str(exc)
         logger.error("Scheduler: aggregator_tap failed: %s\n%s", exc, traceback.format_exc())
+        _send_notification(
+            subject="[ReadRabbit] Aggregator Tap — FAILED",
+            body=f"Layer 3: Aggregator Tap failed with error:\n\n{exc}\n\n{traceback.format_exc()}",
+        )
         try:
             db.rollback()
         except Exception:
@@ -164,10 +231,24 @@ def _run_probation(db_factory: Callable) -> None:
             stats.get("promoted", 0),
             stats.get("removed", 0),
         )
+        _send_notification(
+            subject=f"[ReadRabbit] Probation — {stats.get('promoted', 0)} sources promoted",
+            body=(
+                f"Layer 4: Probation Evaluator completed.\n\n"
+                f"Evaluated: {stats.get('evaluated', 0)}\n"
+                f"Promoted:  {stats.get('promoted', 0)}\n"
+                f"Removed:   {stats.get('removed', 0)}\n"
+                f"Kept:      {stats.get('kept', 0)}\n"
+            ),
+        )
     except Exception as exc:
         _last_run["probation"]["last_ran"] = datetime.now(timezone.utc).isoformat()
         _last_run["probation"]["last_error"] = str(exc)
         logger.error("Scheduler: probation failed: %s\n%s", exc, traceback.format_exc())
+        _send_notification(
+            subject="[ReadRabbit] Probation Evaluator — FAILED",
+            body=f"Layer 4: Probation Evaluator failed with error:\n\n{exc}\n\n{traceback.format_exc()}",
+        )
         try:
             db.rollback()
         except Exception:
