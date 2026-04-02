@@ -58,12 +58,19 @@ function AdminPage({ onBack }) {
   const [queueGenerating, setQueueGenerating] = useState(false)
   const [queueResult, setQueueResult] = useState(null)
 
+  // Review queue state
+  const [queueArticles, setQueueArticles] = useState([])
+  const [queueLoading, setQueueLoading] = useState(false)
+  const [showQueue, setShowQueue] = useState(false)
+  const [reviewing, setReviewing] = useState({}) // { [article_id]: true }
+
   // Fetch stats and articles on mount
   useEffect(() => {
     if (adminToken) {
       fetchStats()
       fetchArticles()
       fetchEvalStats()
+      fetchQueue()
     }
   }, [adminToken])
 
@@ -394,10 +401,46 @@ function AdminPage({ onBack }) {
       const data = await res.json()
       if (!res.ok) throw new Error(data.detail || 'Failed to generate queue')
       setQueueResult(data)
+      // Auto-show queue after generation
+      await fetchQueue()
+      setShowQueue(true)
     } catch (err) {
       setError(err.message)
     } finally {
       setQueueGenerating(false)
+    }
+  }
+
+  const fetchQueue = async () => {
+    setQueueLoading(true)
+    try {
+      const res = await fetch(`${API_BASE}/admin/queue?per_page=50`, { headers: authHeaders() })
+      if (!res.ok) return
+      const data = await res.json()
+      setQueueArticles(data.articles || [])
+      if ((data.articles || []).length > 0) setShowQueue(true)
+    } catch (err) {
+      console.error('Failed to fetch queue:', err)
+    } finally {
+      setQueueLoading(false)
+    }
+  }
+
+  const handleReviewArticle = async (articleId, decision) => {
+    setReviewing(prev => ({ ...prev, [articleId]: true }))
+    try {
+      const res = await fetch(`${API_BASE}/admin/queue/review`, {
+        method: 'POST',
+        headers: authHeaders(),
+        body: JSON.stringify({ article_id: articleId, decision })
+      })
+      if (!res.ok) throw new Error('Review failed')
+      setQueueArticles(prev => prev.filter(a => a.id !== articleId))
+      fetchStats()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setReviewing(prev => ({ ...prev, [articleId]: false }))
     }
   }
 
@@ -985,6 +1028,109 @@ function AdminPage({ onBack }) {
                   {loading ? 'Saving...' : 'Save Article'}
                 </button>
               </div>
+            </div>
+          )}
+        </div>
+
+        {/* Review Queue */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-4 sm:p-6">
+          <button
+            onClick={() => { setShowQueue(v => !v); if (!showQueue) fetchQueue() }}
+            className="w-full flex items-center justify-between"
+          >
+            <div className="flex items-center gap-2">
+              <h2 className="text-base sm:text-lg font-semibold text-gray-900">Review Queue</h2>
+              {queueArticles.length > 0 && (
+                <span className="text-xs px-2 py-0.5 rounded-full bg-orange-100 text-orange-700 font-medium">
+                  {queueArticles.length}
+                </span>
+              )}
+            </div>
+            <svg
+              className={`w-5 h-5 text-gray-400 transition-transform ${showQueue ? 'rotate-180' : ''}`}
+              fill="none" stroke="currentColor" viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+
+          {showQueue && (
+            <div className="mt-4 space-y-3">
+              {queueLoading && (
+                <div className="text-center py-6 text-sm text-gray-400">Loading queue...</div>
+              )}
+
+              {!queueLoading && queueArticles.length === 0 && (
+                <div className="text-center py-6 text-sm text-gray-400">
+                  No articles in queue. Run ✨ Auto to generate one.
+                </div>
+              )}
+
+              {!queueLoading && queueArticles.map(article => (
+                <div key={article.id} className="border border-gray-200 rounded-lg p-3 sm:p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex-1 min-w-0">
+                      <a
+                        href={article.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-gray-900 hover:text-orange-600 text-sm line-clamp-2"
+                      >
+                        {article.title}
+                      </a>
+                      <div className="flex flex-wrap items-center gap-2 mt-1">
+                        {article.source && (
+                          <span className="text-xs text-gray-500">{article.source}</span>
+                        )}
+                        {article.read_time && (
+                          <span className="text-xs text-gray-400">{article.read_time}m read</span>
+                        )}
+                        {article.groq_quality_score != null && (
+                          <span className={`text-xs px-1.5 py-0.5 rounded-full ${
+                            article.groq_quality_score >= 0.7 ? 'bg-green-100 text-green-700' :
+                            article.groq_quality_score >= 0.4 ? 'bg-yellow-100 text-yellow-700' :
+                            'bg-gray-100 text-gray-500'
+                          }`}>
+                            {Math.round(article.groq_quality_score * 100)}% quality
+                          </span>
+                        )}
+                        {(article.topics || []).slice(0, 2).map(t => (
+                          <span key={t} className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-600">{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                    <a
+                      href={article.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                    </a>
+                  </div>
+                  {article.summary && (
+                    <p className="text-xs text-gray-500 line-clamp-2">{article.summary}</p>
+                  )}
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      onClick={() => handleReviewArticle(article.id, 'approved')}
+                      disabled={reviewing[article.id]}
+                      className="flex-1 py-1.5 bg-green-500 text-white text-xs font-medium rounded-lg hover:bg-green-600 disabled:opacity-50 transition-colors"
+                    >
+                      {reviewing[article.id] ? '...' : '✓ Approve'}
+                    </button>
+                    <button
+                      onClick={() => handleReviewArticle(article.id, 'rejected')}
+                      disabled={reviewing[article.id]}
+                      className="flex-1 py-1.5 bg-gray-100 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-200 disabled:opacity-50 transition-colors"
+                    >
+                      {reviewing[article.id] ? '...' : '✕ Reject'}
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
         </div>
