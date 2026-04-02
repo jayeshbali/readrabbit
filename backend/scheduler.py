@@ -55,12 +55,13 @@ _scheduler: Optional[BackgroundScheduler] = None
 
 def _run_feed_crawler(db_factory: Callable) -> None:
     """Run Layer 1: RSS/Atom feed crawl."""
+    import asyncio
     from feed_crawler import crawl_all_sources
 
     db = db_factory()
     try:
         logger.info("Scheduler: starting feed_crawler run")
-        stats = crawl_all_sources(db)
+        stats = asyncio.run(crawl_all_sources(db))
         _last_run["feed_crawler"]["last_ran"] = datetime.now(timezone.utc).isoformat()
         _last_run["feed_crawler"]["last_stats"] = stats
         _last_run["feed_crawler"]["last_error"] = None

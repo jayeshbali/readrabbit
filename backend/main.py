@@ -28,8 +28,14 @@ async def lifespan(app: FastAPI):
         run_migrations()
         # Seed with initial articles if empty
         seed_articles_if_empty()
+        # Start background pipeline scheduler
+        from scheduler import start_scheduler
+        start_scheduler(SessionLocal)
     yield
-    # Shutdown: nothing to do
+    # Shutdown: stop scheduler
+    if DATABASE_URL:
+        from scheduler import stop_scheduler
+        stop_scheduler()
 
 
 def run_migrations():
